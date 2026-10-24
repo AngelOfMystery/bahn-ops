@@ -106,6 +106,42 @@ Blank settings run the deterministic path.
 - app/main.py — FastAPI shell.
 - PROCESS.md — how this was built with AI, written during the build.
 
+## Model configuration
+
+The agent calls any OpenAI-compatible chat endpoint. Nothing about the
+provider is hardcoded; `bahn_ops/agent.py` reads three values and builds the
+request URL from them.
+
+    BAHN_MODEL_API_KEY=your key
+    BAHN_MODEL_BASE_URL=https://api.anyapi.ai/v1
+    BAHN_MODEL_NAME=nvidia/nemotron-3.5-lightning:free
+
+Any of these work; `.env.example` lists all four with the exact strings:
+
+- **AnyAPI**, `https://api.anyapi.ai/v1`, what this build uses.
+- **OpenRouter**, `https://openrouter.ai/api/v1`, many free models.
+- **OpenAI**, `https://api.openai.com/v1`.
+- **A local server** on `http://127.0.0.1:8080/v1` — llama.cpp, vLLM,
+  LM Studio, Ollama. The brief allows local models and nothing here
+  prevents one.
+
+If a value is already set in your shell, it wins over `.env`, because the
+loader uses `os.environ.setdefault`. Set `BAHN_MODEL_NAME` in a shell to try
+a model without editing a file.
+
+Blank settings mean the deterministic path runs. That path is not a
+degraded mode — it is the fallback the agent writes when no model answers,
+and every row it produces records why in `model_error`. A clone with no key
+produces twelve proposals, nine from the deterministic path and three
+refusals, and the board prints the reason on every card.
+
+The parser reads `choices[0].message.content` first and falls back to
+`reasoning_content`. That matters for reasoning models, which spend tokens
+thinking before answering and return null content when they are truncated.
+This build ships `max_tokens: 6000` for that reason; at 600 the model used
+its whole budget thinking and never answered.
+
+
 ## Verification
 
  node -c board/server.cjs && echo BOARD_SYNTAX_OK
