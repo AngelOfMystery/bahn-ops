@@ -1,9 +1,11 @@
+const { render } = require('./page.js');
 const h=require('http'),f=require('fs'),p=require('path');
 const DEC=p.join(__dirname,'..','bahn_ops','decisions.jsonl');
 const LD=()=>{try{if(!f.existsSync(DEC))return[];return f.readFileSync(DEC,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean)}catch(e){return[]}};
 const L=n=>{const x=p.join(__dirname,'dataset','data',n+'.jsonl');
  if(!f.existsSync(x))return[];return f.readFileSync(x,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean)};
-const O=L('orders'),A=L('alerts'),D=L('addresses'),P=(()=>{const o=p.join(__dirname,'..','bahn_ops','ours.jsonl');try{if(f.existsSync(o)){const r=f.readFileSync(o,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean).map(q=>Object.assign({},q,{created_at:q.created_at||q.generated_at}));if(r.length)return r}}catch(e){}return L('agent_proposals')})();
+const O=L('orders'),A=L('alerts'),D=L('addresses'),WI=L('work_items'),EP=L('order_endpoint_details'),P=(()=>{const o=p.join(__dirname,'..','bahn_ops','ours.jsonl');try{if(f.existsSync(o)){const r=f.readFileSync(o,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean).map(q=>Object.assign({},q,{created_at:q.created_at||q.generated_at}));if(r.length)return r}}catch(e){}return L('agent_proposals')})();
+const HID2=A.filter(a=>a.status!=='OPEN').map(a=>({s:a.status||'',r:(a.resolution_reason||a.acknowledgement_reason||'').trim(),sig:a.signal||''}));
 const IDX={};for(const a of D)if(a.id)IDX[a.id]=a;
 const city=i=>{const a=IDX[i]||{};return a.city||a.locality||a.town||''};
 const OM={};for(const o of O)OM[o.id]=o;
@@ -13,7 +15,7 @@ const S={critical:0,high:1,medium:2,low:3};
 const Q=A.filter(a=>a.status==='OPEN').map(a=>{const o=OM[a.order_id]||{},q=PA[a.id]||PO[a.order_id]||{};
  return{r:o.reference||a.order_id,f:city(o.pickup_address_id)||o.pickup_site_id||'?',
  t:city(o.delivery_address_id)||o.delivery_site_id||'?',s:a.severity||'',y:a.summary||'',w:a.triggered_at||'',
- g:q.summary||'',ra:q.rationale||'',ev:(a.evidence_refs||[])[0]||'',oev:(q.evidence_refs||[]).length,sc:q.source_class||'',fs:q.fact_state||'',sb:q.stops_because||'',aid:a.id||'',cmd:q.command||'',me:q.model_error||''}})
+ g:q.summary||'',ra:q.rationale||'',ev:(a.evidence_refs||[])[0]||'',oev:(q.evidence_refs||[]).length,sc:q.source_class||'',fs:q.fact_state||'',sb:q.stops_because||'',aid:a.id||'',cmd:q.command||'',me:q.model_error||'',wi:(()=>{const w=WI.find(x=>x.order_id===o.id);return w?{due:w.due_at||'',kind:w.kind||'',owner:w.owner||'',next:w.next_action||''}:null})(),ep:(()=>{const z=EP.filter(x=>x.order_id===o.id);const p=z.find(x=>x.boundary==='PICKUP')||{};const d=z.find(x=>x.boundary==='DELIVERY')||{};return{pa:p.access_status||'',pc:p.last_confirmed_at||'',ps:p.last_confirmed_source||'',da:d.access_status||'',dc:d.last_confirmed_at||'',ds:d.last_confirmed_source||''}})()}})
  .sort((x,y)=>((S[x.s]??9)-(S[y.s]??9))||x.w.localeCompare(y.w));
 const e=v=>String(v==null?'':v).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 const b=Q.map(r=>`<div class=c data-aid="${r.aid}"><div class=h><b>${e(r.r)}</b><span>${e(r.f)} &rarr; ${e(r.t)}</span><small>${e(r.s)}</small></div>
@@ -64,7 +66,7 @@ async function loadDecisions(){
  }catch(e){}
 }
 document.addEventListener('DOMContentLoaded',loadDecisions);
-</script><h1>Needs a person</h1><p class=m>${Q.length} open of ${A.length} alerts &middot; ${Q.filter(r=>r.g).length} with a proposal</p>${HIDBLOCK}${b||'<p>Nothing waiting.</p>'}`;
+</script><h1>Needs a person</h1><p class=m>${Q.length} need a person &middot; ${Q.filter(r=>r.g).length} with a suggested action</p>${HIDBLOCK}${b||'<p>Nothing waiting.</p>'}`;
 h.createServer((q,s)=>{
  if(q.url==='/decisions'){
   s.writeHead(200,{'content-type':'application/json'});
@@ -87,7 +89,7 @@ h.createServer((q,s)=>{
   return
  }
  s.writeHead(200,{'content-type':'text/html;charset=utf-8'});
- s.end(H)
+ s.end(render({open:Q,hidden:HID2,proposals:Q.filter(r=>r.g).length}))
 })
  .listen(4317,'127.0.0.1',()=>{console.log('UP');console.log('open',Q.length,'proposed',Q.filter(r=>r.g).length,'rationale',Q.filter(r=>r.ra).length,'alert_level_evidence',Q.filter(r=>r.ev).length,'proposal_evidence',Q.filter(r=>r.oev).length);
  console.log('statuses',[...new Set(P.map(x=>x.status).filter(Boolean))].join('|'));
