@@ -45,7 +45,7 @@ still there.
 
 ## Try it — the 60-second demo
 
-The scene the brief describes (deck page 5): a driver stops with a warning light, the agent asks three questions, then hands the person one decision. You can reproduce it on any open alert:
+The scene the brief describes (deck page 5): a driver stops with a warning light, the agent asks three questions, then hands the person one decision. You can reproduce it on any open alert.
 
 1. Run `node board/server.cjs` and open <http://127.0.0.1:4317>. Click **Open case →** on any card.
 2. Type **"Are you safe?"** and press Enter. The agent calls `ask_driver`. The driver replies.
@@ -56,6 +56,7 @@ The scene the brief describes (deck page 5): a driver stops with a warning light
 7. Go back to the queue. Click **Accept** on a proposal. On reload, the card shows **Executed at HH:MM:SS: Alert marked resolved. No customer contacted.** That's `bahn_ops/execute.py` firing in the background.
 
 To see the "the agent never contacts a customer on its own" guard: append a decision with a `customer.*` command to `bahn_ops/decisions.jsonl`, run `python3 -m bahn_ops.execute <alert_id>`, and the strip turns red with **REFUSED · Customer contact requires explicit operator approval**.
+
 
 ## Bring your own model
 
