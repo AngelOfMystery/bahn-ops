@@ -11,6 +11,26 @@ ENV = Path(".env")
 
 FALLBACK_COMMAND = "alert.resolve"
 
+COMMAND_BY_KIND = {
+    "condition": "condition.compare_evidence",
+    "travel": "travel.verify_booking_outcome",
+    "assignment": "assignment.review_positioning",
+    "invoice": "alert.resolve",
+    "identity": "pickup.verify_identity",
+}
+
+
+def command_for(alert):
+    kind = str(alert.get("kind") or alert.get("category") or "").lower()
+    for key, cmd in COMMAND_BY_KIND.items():
+        if key in kind:
+            return cmd
+    text = str(alert.get("summary") or "").lower()
+    for key, cmd in COMMAND_BY_KIND.items():
+        if key in text:
+            return cmd
+    return FALLBACK_COMMAND
+
 
 def load_env():
     if not ENV.exists():
@@ -59,6 +79,93 @@ def load_ours():
 
 def by_order(rows, order_id):
     return [r for r in rows if r.get("order_id") == order_id]
+
+
+SOURCE_BY_SIGNAL = {
+    "TRACKING_GAP": "app",
+    "RELEASE_DOCUMENT_UNCLEAR": "site",
+    "SITE_ACCESS_UNCONFIRMED": "site",
+    "EMPTY_PICKUP": "site",
+    "FERRY_SOLD_OUT": "ferry",
+    "SAFETY_STOP": "driver",
+    "FR_IMPORT_TRAVEL_DECISION": "planner",
+    "POSITIONING_AT_RISK": "driver",
+    "PICKUP_PROOF_REJECTED": "site",
+    "FERRY_TRACKING_GAP_CONTEXT": "app",
+}
+
+STATE_BY_SIGNAL = {
+    "TRACKING_GAP": "stale",
+    "RELEASE_DOCUMENT_UNCLEAR": "reported",
+    "SITE_ACCESS_UNCONFIRMED": "reported",
+    "EMPTY_PICKUP": "reported",
+    "FERRY_SOLD_OUT": "quoted",
+    "SAFETY_STOP": "reported",
+    "FR_IMPORT_TRAVEL_DECISION": "quoted",
+    "POSITIONING_AT_RISK": "reported",
+    "PICKUP_PROOF_REJECTED": "disputed",
+    "FERRY_TRACKING_GAP_CONTEXT": "stale",
+}
+
+
+PREFIX_CLASS = {
+    "track": "app",
+    "conv": "conversation",
+    "msg": "message",
+    "doc": "document",
+    "asg": "assignment",
+    "ord": "order",
+    "drv": "driver",
+    "site": "site",
+}
+
+
+def ref_class(ref):
+    head = str(ref).split("-")[0].lower()
+    return PREFIX_CLASS.get(head)
+
+
+def source_class(alert):
+    for ref in (alert.get("evidence_refs") or []):
+        c = ref_class(ref)
+        if c:
+            return c
+    sig = str(alert.get("signal") or "").upper()
+    if sig in SOURCE_BY_SIGNAL:
+        return SOURCE_BY_SIGNAL[sig]
+    if alert.get("driver_report_message_id"):
+        return "driver"
+    if alert.get("latest_site_conversation_id"):
+        return "site"
+    if alert.get("conversation_id"):
+        return "conversation"
+    if alert.get("assignment_id"):
+        return "assignment"
+    if alert.get("owner") == "ops-readiness":
+        return "operator"
+    return "unknown"
+
+
+def fact_state(alert):
+    sig = str(alert.get("signal") or "").upper()
+    if sig in STATE_BY_SIGNAL:
+        return STATE_BY_SIGNAL[sig]
+    if alert.get("resolved_at"):
+        return "confirmed"
+    return "reported"
+
+
+def stops_because(alert, order, refs):
+    sig = str(alert.get("signal") or "").upper()
+    if sig == "RELEASE_DOCUMENT_UNCLEAR":
+        return "release document unclear; a quote is not a release"
+    if sig == "SITE_ACCESS_UNCONFIRMED":
+        return "site access unconfirmed; vehicle presence is not pickup authority"
+    if sig == "TRACKING_GAP":
+        return "position signal stale; ask the driver before changing a promise"
+    if not refs:
+        return "no evidence refs on the alert"
+    return None
 
 
 def evidence_for(alert, order):
@@ -183,8 +290,11 @@ def deterministic(alert, order, refs):
         "summary": summary,
         "rationale": rationale,
         "evidence_refs": refs,
-        "command": FALLBACK_COMMAND,
+        "command": command_for(alert),
         "needs_approval": True,
+        "source_class": source_class(alert),
+        "fact_state": fact_state(alert),
+        "stops_because": stops_because(alert, order, refs),
         "source": "deterministic",
     }
 

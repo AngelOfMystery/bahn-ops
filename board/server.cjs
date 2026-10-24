@@ -1,4 +1,6 @@
 const h=require('http'),f=require('fs'),p=require('path');
+const DEC=p.join(__dirname,'..','bahn_ops','decisions.jsonl');
+const LD=()=>{try{if(!f.existsSync(DEC))return[];return f.readFileSync(DEC,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean)}catch(e){return[]}};
 const L=n=>{const x=p.join(__dirname,'dataset','data',n+'.jsonl');
  if(!f.existsSync(x))return[];return f.readFileSync(x,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean)};
 const O=L('orders'),A=L('alerts'),D=L('addresses'),P=(()=>{const o=p.join(__dirname,'..','bahn_ops','ours.jsonl');try{if(f.existsSync(o)){const r=f.readFileSync(o,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean).map(q=>Object.assign({},q,{created_at:q.created_at||q.generated_at}));if(r.length)return r}}catch(e){}return L('agent_proposals')})();
@@ -18,6 +20,17 @@ const b=Q.map(r=>`<div class=c><div class=h><b>${e(r.r)}</b><span>${e(r.f)} &rar
 <p class=w>${e(r.y)}</p>${r.g?`<div class=g><div class=gh>Agent proposes</div><p>${e(r.g)}</p>${r.ra?`<p class=gr><b>Why</b> ${e(r.ra)}</p>`:''}${r.ev?`<p class=ge>from <code>${e(r.ev)}</code></p>`:''}</div>`:''}
 <div class=a><button onclick="this.parentNode.innerHTML='<span class=done>Accepted - agent proceeds</span>'">Accept</button>
 <button onclick="this.parentNode.innerHTML='<span class=done>Changed - edit the plan</span>'">Change</button></div></div>`).join('');
+const HID=A.filter(a=>a.status!=='OPEN').map(a=>({
+  s:a.status,
+  r:(a.resolution_reason||a.acknowledgement_reason||'').trim(),
+  sig:a.signal||''
+}));
+const HID_WITH=HID.filter(x=>x.r).length;
+const HID_NONE=HID.length-HID_WITH;
+const e2=v=>String(v==null?'':v).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+const hidRows=HID.map(x=>`<li><code>${e2(x.sig)}</code> <span class=hs>${e2(x.s)}</span> ${x.r?e2(x.r):'<b class=hn>no reason recorded</b>'}</li>`).join('');
+const HIDBLOCK=HID.length?`<details class=hid><summary>${HID.length} hidden &middot; ${HID_WITH} with a recorded reason &middot; ${HID_NONE} without</summary><ul>${hidRows}</ul></details>`:'';
+
 const H=`<!doctype html><meta charset=utf-8><title>Needs a person</title><style>
 body{font:15px/1.55 system-ui;background:#f7f8f9;margin:0;padding:28px;color:#1a1d21}h1{font-size:20px;margin:0 0 3px}
 .m{color:#6b7280;font-size:13px;margin:0 0 22px}.c{background:#fff;border:1px solid #e4e7ea;border-left:3px solid #b45309;border-radius:9px;padding:15px 17px;margin-bottom:10px}
@@ -28,8 +41,26 @@ body{font:15px/1.55 system-ui;background:#f7f8f9;margin:0;padding:28px;color:#1a
 .ge{font:12px ui-monospace,monospace;color:#6b7280}.ge code{background:#fff;border:1px solid #e4e7ea;border-radius:4px;padding:1px 5px}
 .a{display:flex;gap:8px;align-items:center;margin-top:11px}button{font:inherit;font-size:13px;padding:5px 13px;border-radius:6px;border:1px solid #d5d9dd;background:#fff;cursor:pointer}
 button:first-child{background:#15803d;border-color:#15803d;color:#fff}.done{color:#15803d;font-size:13px;font-weight:600}
-</style><h1>Needs a person</h1><p class=m>${Q.length} open of ${A.length} alerts &middot; ${Q.filter(r=>r.g).length} with a proposal</p>${b||'<p>Nothing waiting.</p>'}`;
-h.createServer((q,s)=>{s.writeHead(200,{'content-type':'text/html;charset=utf-8'});s.end(H)})
+.hid{margin:0 0 18px;font-size:13px;color:#4b5563}.hid summary{cursor:pointer;padding:8px 12px;background:#fff;border:1px solid #e4e7ea;border-radius:7px}.hid ul{margin:8px 0 0;padding:0 0 0 18px}.hid li{margin:4px 0;line-height:1.45}.hid code{font:12px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}.hs{color:#6b7280}.hn{color:#b45309}</style><h1>Needs a person</h1><p class=m>${Q.length} open of ${A.length} alerts &middot; ${Q.filter(r=>r.g).length} with a proposal</p>${HIDBLOCK}${b||'<p>Nothing waiting.</p>'}`;
+h.createServer((q,s)=>{
+ if(q.method==='POST'&&q.url==='/decide'){
+  let b='';
+  q.on('data',c=>{b+=c});
+  q.on('end',()=>{
+   let d={};
+   try{d=JSON.parse(b)}catch(e){s.writeHead(400,{'content-type':'application/json'});s.end(JSON.stringify({ok:false,error:'bad json'}));return}
+   if(!d.alert_id||!d.decision){s.writeHead(400,{'content-type':'application/json'});s.end(JSON.stringify({ok:false,error:'alert_id and decision required'}));return}
+   const row={alert_id:d.alert_id,decision:d.decision,command:d.command||'',at:new Date().toISOString()};
+   f.appendFileSync(DEC,JSON.stringify(row)+'\n','utf8');
+   s.writeHead(200,{'content-type':'application/json'});
+   s.end(JSON.stringify({ok:true,row}));
+   return
+  });
+  return
+ }
+ s.writeHead(200,{'content-type':'text/html;charset=utf-8'});
+ s.end(H)
+})
  .listen(4317,'127.0.0.1',()=>{console.log('UP');console.log('open',Q.length,'proposed',Q.filter(r=>r.g).length,'rationale',Q.filter(r=>r.ra).length,'alert_level_evidence',Q.filter(r=>r.ev).length,'proposal_evidence',Q.filter(r=>r.oev).length);
  console.log('statuses',[...new Set(P.map(x=>x.status).filter(Boolean))].join('|'));
  console.log('reviews',[...new Set(P.map(x=>x.review).filter(Boolean))].join('|'));
