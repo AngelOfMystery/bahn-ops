@@ -10,3 +10,6 @@ __pycache__/
 .rentry_cookies
 page.html
 response.json
+
+# build scripts stay local; the repo ships source only
+/*.sh
