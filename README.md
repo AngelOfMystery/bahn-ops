@@ -57,6 +57,34 @@ The scene the brief describes (deck page 5): a driver stops with a warning light
 
 To see the "the agent never contacts a customer on its own" guard: append a decision with a `customer.*` command to `bahn_ops/decisions.jsonl`, run `python3 -m bahn_ops.execute <alert_id>`, and the strip turns red with **REFUSED · Customer contact requires explicit operator approval**.
 
+## Bring your own model
+
+The agent speaks **any OpenAI-compatible chat endpoint**. Nothing about the provider is hardcoded. Set three values in `.env` and the agent uses them; blank values fall back to the deterministic path.
+
+BAHN_MODEL_API_KEY=your key
+BAHN_MODEL_BASE_URL=https://api.anyapi.ai/v1
+BAHN_MODEL_NAME=google/gemini-2.5-flash-lite
+
+
+Any of these work out of the box:
+
+| Provider | Base URL | Notes |
+|---|---|---|
+| **AnyAPI** | `https://api.anyapi.ai/v1` | What this build ships. Free tier includes `google/gemini-2.5-flash-lite` and `nvidia/nemotron-*`. |
+| **OpenRouter** | `https://openrouter.ai/api/v1` | Large catalog of free and paid models. |
+| **OpenAI** | `https://api.openai.com/v1` | GPT-4o, GPT-4o-mini, o1. |
+| **Anthropic** (via proxy) | Any OpenAI-compat proxy | Claude models work through LiteLLM or similar. |
+| **Local llama.cpp** | `http://127.0.0.1:8080/v1` | `llama-server` with `-c 8192`. |
+| **Local vLLM** | `http://127.0.0.1:8000/v1` | Any HuggingFace model. |
+| **Local LM Studio** | `http://127.0.0.1:1234/v1` | GUI app, drop-in. |
+| **Local Ollama** | `http://127.0.0.1:11434/v1` | `ollama run llama3.1`. |
+
+`.env.example` lists the four most useful with exact strings. Any shell variable that is already set wins over `.env`, so `BAHN_MODEL_NAME=... node board/server.cjs` works without editing a file.
+
+**The agent works with no model at all.** Blank settings run the deterministic path — the same tool loop, the same tool order, the same evidence discipline — and every row records why it fell back in `model_error`. This is not degraded mode; it is the fallback the agent writes when the model is unreachable, and it is what the demo runs on when the Wi-Fi is down. The `source` badge on each case page says `model` or `deterministic fallback` so you can see at a glance which path produced the row.
+
+**Switch models mid-run.** Nothing about the agent's behavior is tuned to a specific model. Change `BAHN_MODEL_NAME`, restart the server, and the same tools run against a different brain. We have tested `google/gemini-2.5-flash-lite`, `nvidia/nemotron-3.5-lightning:free`, and a local `llama3.1:8b`. All three work with the same tool definitions and the same streaming output.
+
 ## What a fresh clone shows
 
 A fresh clone has no `bahn_ops/ours.jsonl`, so the board opens with the shipped
