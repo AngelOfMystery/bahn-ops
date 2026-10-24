@@ -307,6 +307,14 @@ h.createServer((q,s)=>{
         {cwd:p.join(__dirname,'..'),timeout:30000,encoding:'utf8'});
       r=JSON.parse(out);
     }catch(e){ r={ok:false,alert_id:id,error:String(e.message||e).slice(0,240)}; }
+    try{
+      const py2 = "import sys,json;sys.path.insert(0,'.');from bahn_ops.case_chat import case_inbox;print(json.dumps(case_inbox('"+id+"')))";
+      const out2 = cp.execFileSync('python3',['-c',py2],{cwd:p.join(__dirname,'..'),timeout:15000,encoding:'utf8'});
+      const inboxData = JSON.parse(out2);
+      if(inboxData && inboxData.length && inboxData[0].thread && inboxData[0].thread.length){
+        r.phone = {driver_id: inboxData[0].driver_id, count: inboxData[0].thread.length, last: inboxData[0].thread[inboxData[0].thread.length-1]};
+      }
+    }catch(e){}
     const env={base:process.env.BAHN_MODEL_BASE_URL||'',model:process.env.BAHN_MODEL_NAME||'',keyPresent:!!process.env.BAHN_MODEL_API_KEY};
     s.writeHead(200,{'content-type':'text/html;charset=utf-8'});
     return s.end(renderCase(r,env));
