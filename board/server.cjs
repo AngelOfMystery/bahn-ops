@@ -13,13 +13,13 @@ const S={critical:0,high:1,medium:2,low:3};
 const Q=A.filter(a=>a.status==='OPEN').map(a=>{const o=OM[a.order_id]||{},q=PA[a.id]||PO[a.order_id]||{};
  return{r:o.reference||a.order_id,f:city(o.pickup_address_id)||o.pickup_site_id||'?',
  t:city(o.delivery_address_id)||o.delivery_site_id||'?',s:a.severity||'',y:a.summary||'',w:a.triggered_at||'',
- g:q.summary||'',ra:q.rationale||'',ev:(a.evidence_refs||[])[0]||'',oev:(q.evidence_refs||[]).length,sc:q.source_class||'',fs:q.fact_state||'',sb:q.stops_because||'',aid:a.id||''}})
+ g:q.summary||'',ra:q.rationale||'',ev:(a.evidence_refs||[])[0]||'',oev:(q.evidence_refs||[]).length,sc:q.source_class||'',fs:q.fact_state||'',sb:q.stops_because||'',aid:a.id||'',cmd:q.command||''}})
  .sort((x,y)=>((S[x.s]??9)-(S[y.s]??9))||x.w.localeCompare(y.w));
 const e=v=>String(v==null?'':v).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 const b=Q.map(r=>`<div class=c data-aid="${r.aid}"><div class=h><b>${e(r.r)}</b><span>${e(r.f)} &rarr; ${e(r.t)}</span><small>${e(r.s)}</small></div>
 <p class=w>${e(r.y)}</p><div class=chips>${r.sc?`<span class=chip>${e(r.sc)}</span>`:''}${r.fs?`<span class=chip st>${e(r.fs)}</span>`:''}${r.oev?`<span class=chip ev>${r.oev} src</span>`:''}</div>${r.sb?`<div class=stop><b>Agent stopped</b> ${e(r.sb)}</div>`:''}${r.g?`<div class=g><div class=gh>Agent proposes</div><p>${e(r.g)}</p>${r.ra?`<p class=gr><b>Why</b> ${e(r.ra)}</p>`:''}${r.ev?`<p class=ge>from <code>${e(r.ev)}</code></p>`:''}</div>`:''}
-<div class=a><span class=dslot></span>${r.sb?'':`<button onclick="decide('${r.aid}','accept')">Accept</button>`}
-<button onclick="decide('${r.aid}','change')">Change</button></div></div>`).join('');
+<div class=a><span class=dslot></span>${r.sb?'':`<button onclick="decide('${r.aid}','accept','${r.cmd||''}')">Accept</button>`}
+<button onclick="decide('${r.aid}','change','${r.cmd||''}')">Change</button></div></div>`).join('');
 const HID=A.filter(a=>a.status!=='OPEN').map(a=>({
   s:a.status,
   r:(a.resolution_reason||a.acknowledgement_reason||'').trim(),
@@ -42,9 +42,9 @@ body{font:15px/1.55 system-ui;background:#f7f8f9;margin:0;padding:28px;color:#1a
 .a{display:flex;gap:8px;align-items:center;margin-top:11px}button{font:inherit;font-size:13px;padding:5px 13px;border-radius:6px;border:1px solid #d5d9dd;background:#fff;cursor:pointer}
 button:first-child{background:#15803d;border-color:#15803d;color:#fff}.done{color:#15803d;font-size:13px;font-weight:600}
 .hid{margin:0 0 18px;font-size:13px;color:#4b5563}.hid summary{cursor:pointer;padding:8px 12px;background:#fff;border:1px solid #e4e7ea;border-radius:7px}.hid ul{margin:8px 0 0;padding:0 0 0 18px}.hid li{margin:4px 0;line-height:1.45}.hid code{font:12px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}.hs{color:#6b7280}.hn{color:#b45309}.chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 0}.chip{font:11px ui-monospace,monospace;background:#f4f6f8;border:1px solid #e4e7ea;border-radius:10px;padding:2px 8px;color:#4b5563}.chip.st{background:#fff7ed;border-color:#fed7aa;color:#b45309}.chip.ev{background:#f0fdf4;border-color:#bbf7d0;color:#15803d}.chip.dc{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;margin-right:6px}.a button:disabled{opacity:.45;cursor:not-allowed}.stop{margin:9px 0 0;padding:9px 11px;background:#fff7ed;border:1px solid #fed7aa;border-radius:7px;font-size:13px;color:#7c2d12}.stop b{color:#b45309;font-weight:600;margin-right:4px}</style><script>
-async function decide(id,kind){
+async function decide(id,kind,cmd){
  try{
-  const r=await fetch('/decide',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({alert_id:id,decision:kind})});
+  const r=await fetch('/decide',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({alert_id:id,decision:kind,command:cmd||''})});
   const j=await r.json();
   if(j.ok){loadDecisions()}else{alert('could not record: '+(j.error||'unknown'))}
  }catch(e){alert('could not record: '+e.message)}
