@@ -107,6 +107,11 @@ def tool_definitions():
             },
         },
         {
+            "name": "lookup_ferry_status",
+            "description": "Look up the ferry status for this order. Returns the reservation state (QUOTED vs BOOKED), whether a boarding scan exists, and the timetable. A quote is not a booking; a booking is not a boarding scan.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        {
             "name": "propose_action",
             "description": "Hand a person one decision. This never executes anything. Customer contact and any booking change require a human yes.",
             "parameters": {
@@ -130,6 +135,26 @@ def run_tool(name, args, ctx):
         return json.dumps(ctx.get("messages", [])[:8], ensure_ascii=False)
     if name == "get_reservations":
         return json.dumps(ctx.get("reservations", [])[:8], ensure_ascii=False)
+    if name == "lookup_ferry_status":
+        # The case's order; find its travel_reservations
+        o = ctx.get("order") or {}
+        oid = o.get("id")
+        rows = [x for x in load("travel_reservations") if x.get("order_id") == oid]
+        if not rows:
+            return "no ferry or travel reservation on this order"
+        out = []
+        for r in rows:
+            status = str(r.get("status") or "").upper()
+            board = r.get("boarding_scan_at") or r.get("boarded_at") or None
+            out.append({
+                "reservation_id": r.get("id"),
+                "status": status,
+                "is_booking": status == "BOOKED",
+                "boarding_scan": bool(board),
+                "scheduled": r.get("departure_at") or r.get("scheduled_at") or r.get("depart_at"),
+                "note": "QUOTED is not a booking; BOOKED is not a boarding scan" if status == "QUOTED" else ("boarding scan present" if board else "no boarding scan yet"),
+            })
+        return json.dumps(out, ensure_ascii=False)
     if name == "ask_driver":
         question = args.get("question", "")
         reply = scripted_driver(question)
