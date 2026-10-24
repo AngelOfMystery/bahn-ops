@@ -1,15 +1,18 @@
 const { render } = require('./page.js');
+const { renderCase } = require('./case.js');
 const h=require('http'),f=require('fs'),p=require('path');
 const DEC=p.join(__dirname,'..','bahn_ops','decisions.jsonl');
 const LD=()=>{try{if(!f.existsSync(DEC))return[];return f.readFileSync(DEC,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean)}catch(e){return[]}};
 const L=n=>{const x=p.join(__dirname,'dataset','data',n+'.jsonl');
  if(!f.existsSync(x))return[];return f.readFileSync(x,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean)};
-const O=L('orders'),A=L('alerts'),D=L('addresses'),WI=L('work_items'),EP=L('order_endpoint_details'),P=(()=>{const o=p.join(__dirname,'..','bahn_ops','ours.jsonl');try{if(f.existsSync(o)){const r=f.readFileSync(o,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean).map(q=>Object.assign({},q,{created_at:q.created_at||q.generated_at}));if(r.length)return r}}catch(e){}return L('agent_proposals')})();
+const O=L('orders'),A=L('alerts'),D=L('addresses'),WI=L('work_items'),EP=L('order_endpoint_details'),P=(()=>{const o=p.join(__dirname,'..','bahn_ops','ours.jsonl');try{if(f.existsSync(o)){const r=f.readFileSync(o,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean).map(q=>Object.assign({},q,{created_at:q.created_at||q.generated_at}));if(r.length)return r}}catch(e){}return L('agent_proposals').map(q=>Object.assign({},q,{summary:'',rationale:'',command:'',evidence_refs:[],source_class:'',fact_state:'',model_error:null,superseded_by_proposal_id:null,superseded_at:null,stops_because:'agent has not run; run bash verify.sh'}))})();
 const HID2=A.filter(a=>a.status!=='OPEN').map(a=>({s:a.status||'',r:(a.resolution_reason||a.acknowledgement_reason||'').trim(),sig:a.signal||''}));
 const IDX={};for(const a of D)if(a.id)IDX[a.id]=a;
 const city=i=>{const a=IDX[i]||{};return a.city||a.locality||a.town||''};
 const OM={};for(const o of O)OM[o.id]=o;
-const live=P.filter(q=>!q.superseded_by_proposal_id&&!q.superseded_at).sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
+const _oursExists=(()=>{try{return f.existsSync(p.join(__dirname,'..','bahn_ops','ours.jsonl'))}catch(e){return false}})();
+const _all=P.filter(q=>!q.superseded_by_proposal_id&&!q.superseded_at);
+const live=_oursExists?_all:[];
 const PA={},PO={};for(const q of live){if(q.alert_id)PA[q.alert_id]=q;if(q.order_id)PO[q.order_id]=q}
 const S={critical:0,high:1,medium:2,low:3};
 const Q=A.filter(a=>a.status==='OPEN').map(a=>{const o=OM[a.order_id]||{},q=PA[a.id]||PO[a.order_id]||{};
@@ -68,7 +71,20 @@ async function loadDecisions(){
 document.addEventListener('DOMContentLoaded',loadDecisions);
 </script><h1>Needs a person</h1><p class=m>${Q.length} need a person &middot; ${Q.filter(r=>r.g).length} with a suggested action</p>${HIDBLOCK}${b||'<p>Nothing waiting.</p>'}`;
 h.createServer((q,s)=>{
- if(q.url==='/decisions'){
+ if(q.url.startsWith('/case/')){
+    const id=decodeURIComponent(q.url.slice(6).split('?')[0]).replace(/[^A-Za-z0-9_\-]/g,'');
+    let r={ok:false,alert_id:id,error:'case engine not invoked'};
+    try{
+      const out=require('child_process').execFileSync('python3',['-c',
+        "import sys,json;sys.path.insert(0,'.');from bahn_ops.case_chat import run_case;print(json.dumps(run_case('"+id+"')))"],
+        {cwd:require('path').join(__dirname,'..'),timeout:60000,encoding:'utf8'});
+      r=JSON.parse(out);
+    }catch(e){ r={ok:false,alert_id:id,error:String(e.message||e).slice(0,240)}; }
+    const env={base:process.env.BAHN_MODEL_BASE_URL||'',model:process.env.BAHN_MODEL_NAME||'',keyPresent:!!process.env.BAHN_MODEL_API_KEY};
+    s.writeHead(200,{'content-type':'text/html;charset=utf-8'});
+    return s.end(renderCase(r,env));
+  }
+  if(q.url==='/decisions'){
   s.writeHead(200,{'content-type':'application/json'});
   s.end(JSON.stringify(LD()));
   return

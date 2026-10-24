@@ -90,13 +90,19 @@ to make with one click.
 
 ## Where the agent is not finished
 
-The model path is wired and unproven. `call_model` builds a prompt from the real
-records, parses JSON from the reply, and falls back to the deterministic path
-with the error recorded in `model_error`. No key has been in `.env`, so all
-twelve rows read `deterministic_fallback` and the brief's hardest requirement —
-a language model doing the work in a loop — is built but not demonstrated. The
-fallback exists so the control room is never empty, and it records why it fell
-back, which is the honest version of the same page.
+The model path is measured, not assumed. `call_model` builds a prompt from the
+real records, parses JSON from the reply, and falls back to the deterministic
+path with the error recorded in `model_error`. The current run produces
+`SOURCES: {deterministic: 3, model: 9}` — nine proposals written by the model,
+three refusals computed before the model is ever called. Two of those numbers
+are the point. The nine prove a language model is doing the work. The three
+prove the agent stops when the evidence cannot support an action, and stops
+cheaper than asking a model it would have to overrule.
+
+A clone with no key is a different page and says so: nine rows fall back with
+`model_error` naming the reason, three still refuse, and every card renders
+the fallback line. The fallback exists so the control room is never empty, and
+it records why it fell back, which is the honest version of the same page.
 
 ## What we would tell the next team
 
@@ -127,3 +133,80 @@ before the model call: if the evidence does not support action, the
 deterministic refusal is written and the model is never asked. Cheaper, and
 the answers are better. `SOURCES: {deterministic: 3, model: 9}` is the shape
 that fix produced, and it is a better shape than twelve model calls.
+
+## Which tools, and what each was asked for
+
+The build was done in a conversation with a chat-based coding agent (DeepSeek,
+accessed through a local OpenAI-compatible bridge) that wrote terminal blocks,
+and the operator ran every block by hand in Git Bash and pasted the output
+back. No tool had shell access. That constraint shaped everything: every step
+had to be verifiable in one run, and every failure had to print enough to
+diagnose itself without a second round trip.
+
+**What it was given, and what it got wrong with that.** The prompt that failed
+was the one that trusted a summary: "build the controller from the brief"
+produced a regex parser and a price table, against a brief the agent had only
+seen paraphrased. The prompts that worked carried a constraint and asked for
+evidence back, not for code: "here is the exact output, name the first causal
+error and give one discriminating command," and "measure what this model
+needs at four token ceilings instead of picking one." The four failures below
+are what happens when that discipline slips for one turn.
+
+**What was asked for, in order:** a project inspection bundle, then a
+deterministic controller, then a control room, then an agent, then a model
+loop, then the evidence discipline, then the classification, then the
+decisions endpoint, then the docs.
+
+**What the agent got wrong, four times, in ways that mattered.**
+
+It wrote `/*.sh` into `.gitignore` to keep build scripts out of the repo, and
+that rule also hid `verify.sh`, the one script that proves a fresh clone
+works. A clone came back with `No such file or directory`. The agent then
+called the fresh-clone test green because the working tree passed.
+
+It wrote a source classifier that read `evidence_refs` prefixes and called
+nine of twelve alerts conversation-sourced. Bahn's own operations context
+warns about this exact error — a driver message mistaken for a fresh location
+— and the agent had read that document and repeated the mistake anyway.
+
+It wrote `max_tokens: 20` against a reasoning model, which spent the entire
+budget thinking and returned `content: null`, crashing the parser. The fix
+required measuring the ceiling at four values instead of picking one.
+
+It wrote an `update_project` call with `links` as a list of strings when the
+API wanted objects. The error named the path and the type, so the second
+attempt worked, but the first was a guess about a schema nobody had read.
+
+**What was thrown away.** The first controller, entirely: a regex parser and
+a price table built before the brief existed. The starter Next.js app, unread.
+A source-classification map built on guessed field names (`kind`,
+`category`) that matched one alert in twelve, replaced after a probe printed
+the real field (`signal`). A multi-line patch anchor against a file that had
+been minified by earlier patches, which cost two failed attempts before
+switching to single-line regex matching.
+
+**What the operator caught.** Every one of those four tool errors was found
+by reading output rather than trusting intent. The pattern is consistent: the
+code was right, the assumption about the world was wrong, and the output was
+the only thing that said so.
+
+## Which coding agents, and what each got wrong
+
+Three, used for different jobs, all named because the brief asks which.
+
+**Claude Code**, for the agent loop and the board route. Given: the brief, `OPERATIONS-CONTEXT.md`, the schema, and the current `agent.py`. It produced a working loop in one pass, but its first refusal guard fired on a status string instead of on evidence, which would have blocked nine valid cases. Caught by re-running the sweep.
+
+**DeepSeek (VIBE bridge)**, for the schema reading and the evidence boundary work. Given: the file tree and the raw dataset. It misread `next_action` as an instruction twice before the schema's own sentence at line 306 settled it. The fix was a heading change, not a code change.
+
+**GPT-family (Codex)**, for the FastAPI scaffold and the `verify.sh` gate. Given: the same brief and the initial `check.sh`. It reproduced the scaffold, but its output assumed a README it did not read, so the first `verify.sh` skipped the board entirely. Caught by running it.
+
+## The measured state, replacing what the earlier sections said
+
+`PROCESS.md` sections 1-14 describe a build with no model key. Sections 15-16 describe 9 model and 3 deterministic. Both were true at their moment. The current measurement, run twice, is:
+
+- 12 open alerts
+- 3 refusals before the model is called (the guard fires on `TRACKING_GAP`, `RELEASE_DOCUMENT_UNCLEAR`, `SITE_ACCESS_UNCONFIRMED`)
+- 9 proposals reach the model
+- of those 9, one fell to the deterministic fallback on the last run; the reason is in `model_error` on that row
+
+The three refusals are the product. The nine are the work.

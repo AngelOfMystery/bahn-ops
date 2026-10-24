@@ -20,3 +20,8 @@ bahn_ops/ours.jsonl
 *.bak*
 repo.txt
 bahn_ops/decisions.jsonl
+board_server.log
+node_modules/
+bahn_ops/traces.jsonl
+
+_scratch/

@@ -134,7 +134,7 @@ function render({ open, hidden, proposals }) {
   };
 
   const queue = open.length
-    ? section('Bahn already decided', `${withWi.length} orders with an owner and a due time`, withWi) +
+    ? section('Bahn queued a check, not a decision', `${withWi.length} orders with a work item, an owner and a due time — Bahn's own schema calls next_action an internal interpretation`, withWi) +
       section('Nobody has decided', `${withoutWi.length} orders where the agent proposes`, withoutWi)
     : `<div class=empty><h3>Nothing needs a person</h3><p>The agent checked every open alert and none requires a decision. Hidden alerts are listed above with what was checked.</p></div>`;
 
