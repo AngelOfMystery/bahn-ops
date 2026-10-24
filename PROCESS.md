@@ -210,3 +210,67 @@ Three, used for different jobs, all named because the brief asks which.
 - of those 9, one fell to the deterministic fallback on the last run; the reason is in `model_error` on that row
 
 The three refusals are the product. The nine are the work.
+
+## The talk-to-the-agent turn
+
+The brief's second requirement is a real agent "that a person can talk to."
+Our first build had a case page that rendered the agent's run as a static
+trace. That is a *trace*, not a *conversation*. A judge clicking through it
+would see what the agent did, but had nowhere to type. We read the brief
+again: *"one that uses tools and that a person can talk to."* Two verbs, not
+one. We were doing the first.
+
+The fix was three pieces: a `/case/:id/say` endpoint that accepts a
+message and continues the same conversation, a `continue_case()` function
+that replays the stored history plus the new operator turn through the same
+tool loop `run_case()` uses, and a UI below the trace that shows operator
+turns in blue and agent turns in green, with an input box and two
+suggestion chips derived from the case state.
+
+Three things we got wrong on the way to working:
+
+**The case route overwrote history on every reload.** `run_case()` wrote
+its own output to `bahn_ops/case_history/{alert}.json` on every call,
+including when the case page just wanted to *read* the conversation. That
+meant the operator's message was written by `/say`, then erased the next
+time anyone opened the page. The fix is to check `load_history()` first and
+only seed if the file is empty; the case GET no longer calls `run_case` at
+all, it reads history directly and pulls the alert metadata from the
+dataset.
+
+**We tested rendering with the wrong grep.** `grep -c 'Agent proposes'`
+counts *lines*, not occurrences, and our HTML is one line. Every board
+looked like it had exactly one proposal card until we switched to
+`grep -o ... | wc -l`. The board had been fine for hours. The lesson is
+that a test that reports a stable nonzero number is not the same as a test
+that reports the number you meant.
+
+**The model 429'd mid-demo.** The free tier on `nvidia/nemotron-3.5-lightning`
+caps at 100 requests per day, and we hit it while testing the tool loop.
+We switched to `google/gemini-2.5-flash-lite` and the leak forced a
+rotation anyway (see the earlier section). The important outcome is that
+the demo never stopped working. `continue_case` and `run_case` both fall
+through to a deterministic turn when the model does not answer, and the
+deterministic turn *uses the same tools in the same order* — so the trace
+on the case page is indistinguishable in shape from the model-backed run,
+just faster and poorer. The fallback is not degraded mode: it is what the
+demo uses when the room Wi-Fi is down, and it records its own reason on
+every row.
+
+The current state, measured from a fresh clone:
+
+- 12 open alerts
+- 5 carry a proposal from the shipped examples
+- 7 show "The agent has not looked at this case yet. Run agent on this case."
+- Clicking that button spawns `run_case` for that one alert, writes the
+  result to `bahn_ops/ours.jsonl`, and the card fills in
+- Every card links to `/case/:id`, which shows the trace and a text box
+- Typing into the box and pressing Send appends to
+  `bahn_ops/case_history/{id}.json`, calls `continue_case`, and reloads
+- On reload, the operator's message appears in blue and the agent's
+  response in green, both still there
+
+That is the loop the brief describes. A person sees the orders that need
+them, opens one, sees what the agent already found out, talks to it if the
+case is unclear, accepts or changes the agent's proposal, and the decision
+persists. The agent does the legwork; the person decides.
