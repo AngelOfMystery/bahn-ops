@@ -420,21 +420,37 @@ def continue_case(alert_id, human_message):
             # If the operator's message is about the driver, ask the driver.
             asked = False
             low = (human_message or "").lower()
-            if any(w in low for w in ("driver", "ask", "where", "safe", "release", "paper")):
+            if any(w in low for w in ("driver", "ask", "where", "safe", "release", "paper", "check", "call")):
                 q = human_message[:140] if "?" in human_message else human_message[:140] + "?"
                 run_tool("ask_driver", {"question": q}, ctx)
                 asked = True
             if not asked:
                 run_tool("ask_driver", {"question": "Can you confirm your current location and status?"}, ctx)
             record["driver_replies"] = ctx["driver_replies"]
-            record["turns"].append({
-                "assistant": (
-                    "I sent the driver your question. Reply is above. "
-                    "The case itself is still on hold: " + str(refusal) + ". "
-                    "To lift the hold I need a signed release document from the site "
-                    "or a fresh position signal from the driver app."
-                )
-            })
+
+            # After asking, the assistant acknowledges what it did — but the
+            # reply already carries the answer, so don't repeat it. Vary the
+            # acknowledgement by intent so consecutive turns don't read the same.
+            said = ""
+            if any(w in low for w in ("where", "location", "position")):
+                said = "Asked. The driver's reply is in the tool result above."
+            elif any(w in low for w in ("safe", "okay", "hurt", "injur")):
+                said = "Asked. The driver answered above."
+            elif any(w in low for w in ("release", "paper", "document", "signed")):
+                said = "Asked. The driver's answer about the paperwork is above."
+            elif any(w in low for w in ("eta", "when", "time")):
+                said = "Asked. The ETA answer is above."
+            else:
+                said = "Asked. The driver's reply is above."
+
+            # Add the "still on hold because" note ONCE, not on every turn.
+            prior_assistant = sum(1 for h in history if h.get("role") == "agent" and (h.get("turn") or {}).get("assistant"))
+            if prior_assistant == 0:
+                said += " The case itself is on hold: " + str(refusal) + "."
+            else:
+                said += " Still on hold."
+
+            record["turns"].append({"assistant": said})
             record["mode"] = "deterministic"
             if merr:
                 record["model_error"] = merr
