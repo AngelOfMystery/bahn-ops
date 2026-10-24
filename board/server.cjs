@@ -286,7 +286,9 @@ function renderPage(){
     'document.addEventListener("DOMContentLoaded",loadDecisions);'+
     '</script>'+
     '<h1>Needs a person</h1><p style="margin:0 0 22px;font-size:13px"><a href="/phone" style="color:#6b7280;text-decoration:none">Phone log &rarr;</a></p>'+
-    '<p class=m><b>'+Q.length+'</b> open &middot; <b>'+proposed+'</b> with a proposal &middot; <b>'+stopped+'</b> where the agent stopped'+(notrun>0?' &middot; <b>'+notrun+'</b> the agent has not run':'')+'</p>'+
+    '<p class=m><b>'+proposed+'</b> ready for your call &middot; <b>'+stopped+'</b> that need more evidence'+
+      (notrun>0?' &middot; <b>'+notrun+'</b> the agent is still working on':'')+
+      ' &middot; <span style="color:#9ca3af">'+Q.length+' open in total</span></p>'+
     QUIET+HIDBLOCK+
     (cards||'<div class="emptyboard"><b>All '+quiet.total+' orders checked. Nothing needs you.</b><br>Every order passed address parity, alert presence, and travel status.</div>');
 }
