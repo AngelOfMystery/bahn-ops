@@ -118,6 +118,11 @@ function renderCase(r, env) {
   var model = (env && env.model) || "(default)";
   var modeLabel = r.mode || "deterministic";
 
+  var failureBlock = (r && r.ok === false)
+    ? '<div class="failure"><b>The agent did not run on this case</b><p>' +
+      esc(r.error || 'unknown error') + '</p>' +
+      '<a href="" class="retry">Retry &rarr;</a></div>'
+    : "";
   var refusalBlock = r.refusal
     ? '<div class="refusal"><b>Agent stopped</b><p>' + esc(r.refusal) + '</p></div>'
     : "";
@@ -144,6 +149,10 @@ function renderCase(r, env) {
     '.summarybox{background:#fff;border:1px solid #e4e7ea;border-left:3px solid #15803d;border-radius:8px;padding:12px 14px;margin:0 0 14px}' +
     '.sline{display:flex;gap:12px;padding:3px 0;font-size:14px;color:#1a1d21;line-height:1.45}' +
     '.slabel{flex:0 0 92px;font:11px ui-monospace,monospace;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;font-weight:600;padding-top:3px}' +
+    '.failure{background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #b91c1c;border-radius:8px;padding:12px 14px;margin:0 0 14px}' +
+    '.failure b{color:#991b1b;display:block;margin-bottom:4px}' +
+    '.failure p{margin:0;color:#7c2d12;font-size:13px}' +
+    '.failure .retry{display:inline-block;margin-top:8px;font-size:12px;color:#b91c1c;text-decoration:none;font-weight:600}' +
     '.refusal{background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #b91c1c;border-radius:8px;padding:12px 14px;margin:0 0 16px}' +
     '.phonelink{display:block;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:9px 12px;margin:0 0 14px;font-size:13px;color:#5b21b6;text-decoration:none}' +
     '.phonelink code{background:#fff;border:1px solid #ddd6fe;border-radius:4px;padding:1px 5px;font:11px ui-monospace,monospace}' +
@@ -183,6 +192,7 @@ function renderCase(r, env) {
       '<div class="sline"><span class="slabel">Where this is</span><span>' + esc(summaryFor(r).where) + '</span></div>' +
       '<div class="sline"><span class="slabel">What\'s next</span><span>' + esc(summaryFor(r).next) + '</span></div>' +
     '</div>' +
+    failureBlock +
     refusalBlock +
     phoneBlock +
     '<h2 class="sec">What the agent did</h2>' +
@@ -195,7 +205,10 @@ function renderCase(r, env) {
     '<input id="sayin" placeholder="What should the agent do next?" autocomplete="off">' +
     '<button id="saybtn" onclick="say()">Send</button>' +
     '</div>' +
-    '<p class="env">provider ' + esc(provider) + ' &middot; model ' + esc(model) + ' &middot; running ' + esc(modeLabel) + '</p>' +
+    '<p class="env">' + (env && env.keyPresent
+      ? 'model ' + esc(model) + ' via ' + esc(provider) + ' &middot; mode ' + esc(modeLabel)
+      : 'running on the deterministic fallback (no model key set) &middot; mode ' + esc(modeLabel)
+    ) + '</p>' +
     '<script>' +
     'var ALERT_ID=' + JSON.stringify(r.alert_id) + ';' +
     'async function say(q){' +

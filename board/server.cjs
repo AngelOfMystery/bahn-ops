@@ -138,9 +138,11 @@ const e=v=>String(v==null?'':v).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&'
 
 function renderCard(r){
   const triggered = String(r.w||'').slice(0,19).replace('T',' ');
+  const factWhen = (r.ep && (r.ep.pc || r.ep.dc)) ? String(r.ep.pc || r.ep.dc).slice(0,19).replace('T',' ') : triggered;
+  const factSource = (r.ep && (r.ep.ps || r.ep.ds)) ? String(r.ep.ps || r.ep.ds) : r.sc;
   const chips='<div class=chips>'+
-    (r.sc?'<span class=chip title="source: '+e(r.sc)+' — alert triggered at '+e(triggered)+'">'+e(r.sc)+'</span>':'')+
-    (r.fs?'<span class="chip st" title="state: '+e(r.fs)+' — first seen at '+e(triggered)+'">'+e(r.fs)+'</span>':'')+
+    (r.sc?'<span class=chip title="source: '+e(factSource)+' — fact recorded at '+e(factWhen)+' (alert triggered '+e(triggered)+')">'+e(r.sc)+'</span>':'')+
+    (r.fs?'<span class="chip st" title="state: '+e(r.fs)+' — fact recorded at '+e(factWhen)+' (alert triggered '+e(triggered)+')">'+e(r.fs)+'</span>':'')+
     (r.oev?'<span class="chip ev" title="'+r.oev+' evidence references cited by this proposal">'+r.oev+' src</span>':'')+
     '</div>';
   const caseLink='<a class=caselink href="/case/'+encodeURIComponent(r.aid)+'">Open case &rarr;</a>';
