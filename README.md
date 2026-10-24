@@ -147,3 +147,14 @@ its whole budget thinking and never answered.
  node -c board/server.cjs && echo BOARD_SYNTAX_OK
  python3 -c "import ast,pathlib;ast.parse(pathlib.Path('bahn_ops/agent.py').read_text());print('AGENT_SYNTAX_OK')"
  curl -s http://127.0.0.1:8000/health
+
+## What a fresh clone shows
+
+A fresh clone has no `bahn_ops/ours.jsonl`, so the board opens with the shipped
+examples from `board/dataset/data/agent_proposals.jsonl` alongside the 12 open
+alerts. Five of those alerts carry a shipped proposal. The other seven show
+**"The agent has not looked at this case yet — Run agent on this case."** Click
+the button and `case_chat.run_case` runs on that one alert, writes the result
+to `bahn_ops/ours.jsonl`, and the card fills in. That is the intended first-run
+experience: the agent is not a page of stale output, it is a button a person
+presses.
