@@ -329,3 +329,39 @@ The measured state after the phone log: 12 open alerts, 5 with a shipped
 proposal, 7 where the agent has not run, every card links to a case page,
 every case page has a text box and a phone-log link, every driver question
 shows up in `/phone`, every override shows up as `operator_override`.
+
+## The second half of the build
+
+`PROCESS.md` above documents the first day. The second day — the evening of 24 October — is where the submission became a submission, and it deserves the same honesty as the first half. Every change below landed as a separate commit with a backup and a test. Nothing was edited in place without the ability to revert.
+
+**The four features added after the first submission-ready state:**
+
+1. **Quiet-orders drill-in.** The board's collapsed panel used to say "88 of 100 orders checked and quiet." A count is an assertion. The fix was to make it a table: every quiet order, with three checks visible per order (address parity, alert presence, travel status). The deck says "for every hidden order, say what was checked" — a table is what that sentence asks for.
+
+2. **Handover-back strip.** The brief says "how it passes a case to a person, **and how it gets it back**." We had the passing. We did not have the getting back. After clicking Accept, nothing visible happened. The fix was three states: pending (executing), success (executed at HH:MM:SS, effect shown), refused (red, reason shown). The strip reads from `bahn_ops/executions.jsonl`, which is written by a real subprocess that fires in the background when a decision is recorded.
+
+3. **Case-page summary box.** "In a few seconds" — the deck's phrase — was not being served by a page that led with the trace. The fix was a two-line box at the top: "Where this is" (state, in a sentence) and "What's next" (the recommendation, in a sentence). Everything below is evidence for those two lines. A judge reading the box can make a decision in under three seconds.
+
+4. **Executor with customer-contact refusal.** The brief says the agent never contacts a customer on its own. We had that as a *rule*. Now it is a *guard*: any command starting with `customer.`, `notify.customer`, `email.customer`, or `sms.customer` is refused by the executor, with the refusal recorded and rendered red on the strip. Every other command has an explicit entry in `EXECUTABLE_EFFECTS`. An unknown command is refused, not invented.
+
+**Three bugs caught in tests before the video:**
+
+**The chips bug.** Nine of twelve cards were missing the source and state chips. `agent.py`'s model-success path did not set `source_class` or `fact_state` — only the deterministic refusal path did. A judge clicking through would have seen one card with chips and eleven without. Found by counting `chip title` attributes in the rendered HTML, not by clicking. Fixed by setting the fields on every path.
+
+**The style-injection bug.** A patch that was supposed to add CSS to the quiet-orders table produced `''+` in the styles chain and turned `board/server.cjs` into a syntax error. Caught by the mandatory `node -c` check after every drop. Reverted with `git checkout`, then the same fix applied with a safer insertion point — new styles added as a *new* concatenation entry, never replacing a quoted segment that was already part of a chain.
+
+**The frozen decisions lookup.** The handover strip read from a module-level `DECISIONS_BY_ALERT` that was populated once at server startup. Accepting a decision wrote to `decisions.jsonl` on disk, but the strip read the frozen map and saw no entry. The fix was to build the lookup per request. Caught by the strip test that accepts a card and reloads — it showed strips: 0 after accept. Two attempted fixes failed before the third identified the actual cause.
+
+**What we did not take the first answer on:** every drop tonight was tested before commit. Every test had a check that could *fail*. When the test passed without the fix having been applied (the chip title count reading 1 because grep counts lines, not occurrences), we fixed the test, not the code. The pattern is consistent with the first day: the code is usually right, the assumption about the world is usually wrong, and the output is the only thing that says so.
+
+**The final state, measured:**
+
+- 12 open alerts, 5 with a shipped proposal on fresh clone, 7 where the agent has not run
+- Every card carries source, state, and evidence chips with tooltip timestamps
+- Every card links to a case page that shows "Where this is" and "What's next" first
+- Every case page has a text box where the operator can ask the agent questions
+- Every driver question is logged in `/phone` with a `question_id` and a `reply_id`
+- Every operator override of a scripted reply is marked `operator_override` in the log
+- Every accept fires `execute.py`, which writes a real `executions.jsonl` row
+- Customer-contact commands are refused, visibly, on the strip
+- Six tools, four routes beyond the two index pages, no dependencies outside the standard library

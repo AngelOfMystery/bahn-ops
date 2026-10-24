@@ -43,6 +43,20 @@ Asking and looking things up need no permission. Accepting a proposal writes a
 decision to `bahn_ops/decisions.jsonl` with a timestamp. Reload and it is
 still there.
 
+## Try it — the 60-second demo
+
+The scene the brief describes (deck page 5): a driver stops with a warning light, the agent asks three questions, then hands the person one decision. You can reproduce it on any open alert:
+
+1. Run `node board/server.cjs` and open <http://127.0.0.1:4317>. Click **Open case →** on any card.
+2. Type **"Are you safe?"** and press Enter. The agent calls `ask_driver`. The driver replies.
+3. Type **"Where exactly are you?"**. The agent asks again. The driver answers.
+4. Type **"Send a photo of the warning light"**. The driver sends one (scripted).
+5. Click the **phone log** chip at the top. Every question and answer is there, side by side, with timestamps.
+6. Type your own reply as the driver (e.g. **"Stuck in traffic near Espoo, 40 min late"**), send it. Back on the case page, the new reply replaces the scripted one.
+7. Go back to the queue. Click **Accept** on a proposal. On reload, the card shows **Executed at HH:MM:SS: Alert marked resolved. No customer contacted.** That's `bahn_ops/execute.py` firing in the background.
+
+To see the "the agent never contacts a customer on its own" guard: append a decision with a `customer.*` command to `bahn_ops/decisions.jsonl`, run `python3 -m bahn_ops.execute <alert_id>`, and the strip turns red with **REFUSED · Customer contact requires explicit operator approval**.
+
 ## What a fresh clone shows
 
 A fresh clone has no `bahn_ops/ours.jsonl`, so the board opens with the shipped
