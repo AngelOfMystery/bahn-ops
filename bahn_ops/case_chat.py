@@ -544,3 +544,111 @@ if __name__ == "__main__":
         print(json.dumps(continue_case(aid, msg), indent=2, ensure_ascii=False))
     else:
         print(json.dumps(run_case(aid), indent=2, ensure_ascii=False))
+
+
+# ---------- streaming ----------
+
+def continue_case_streaming(alert_id, human_message):
+    """Yield SSE-style events as the model works: token, tool, done.
+
+    Falls back to the deterministic path if the model is unreachable.
+    """
+    ctx, err = _build_ctx(alert_id)
+    if err:
+        yield {"event": "error", "data": err}
+        return
+
+    alert = ctx["alert"]
+    order = ctx["order"]
+    refusal = ctx["refusal"]
+    tools = tool_definitions() if not refusal else [t for t in tool_definitions() if t["name"] in ("get_order", "get_messages", "get_reservations", "ask_driver", "lookup_ferry_status")]
+
+    sys_msg = _system_message(alert, order, refusal)
+    messages = [sys_msg]
+    history = load_history(alert_id)
+    for h in history:
+        if h.get("role") == "operator":
+            messages.append({"role": "user", "content": str(h.get("content", ""))})
+        elif h.get("role") == "agent":
+            t = h.get("turn") or {}
+            if t.get("tool") and t.get("tool") != "propose_action":
+                messages.append({"role": "tool", "tool_call_id": "", "content": str(t.get("result", ""))[:2000]})
+            elif t.get("assistant"):
+                messages.append({"role": "assistant", "content": t["assistant"]})
+    messages.append({"role": "user", "content": str(human_message)})
+
+    record = {"turns": [], "proposal": None, "driver_replies": []}
+
+    for turn_num in range(MAX_TURNS):
+        payload, err = model_turn(messages, tools)
+        if payload is None or "choices" not in payload:
+            # fallback path
+            det = deterministic_turn(ctx)
+            record["turns"].append(det)
+            record["driver_replies"] = ctx["driver_replies"]
+            yield {"event": "fallback", "data": {"reason": err or "no payload", "turn": det}}
+            record["mode"] = "deterministic"
+            record["model_error"] = err or "no payload"
+            break
+
+        choice = payload["choices"][0]
+        msg = choice.get("message") or {}
+        tool_calls = msg.get("tool_calls") or []
+        content = msg.get("content") or ""
+
+        if content:
+            yield {"event": "token", "data": {"text": content}}
+
+        assistant_entry = {"role": "assistant", "content": content}
+        if tool_calls:
+            assistant_entry["tool_calls"] = tool_calls
+        messages.append(assistant_entry)
+
+        if not tool_calls:
+            record["turns"].append({"assistant": content})
+            record["mode"] = "model"
+            break
+
+        for c in tool_calls:
+            fn = (c.get("function") or {}).get("name")
+            raw = (c.get("function") or {}).get("arguments") or "{}"
+            try:
+                args = json.loads(raw)
+            except json.JSONDecodeError:
+                args = {}
+            yield {"event": "tool_start", "data": {"tool": fn, "args": args}}
+            if fn == "propose_action":
+                prop = {
+                    "kind": "propose",
+                    "summary": args.get("summary", ""),
+                    "rationale": args.get("rationale", ""),
+                    "needs_approval": True,
+                }
+                record["turns"].append({"tool": "propose_action", "args": args})
+                record["proposal"] = prop
+                yield {"event": "proposal", "data": prop}
+                messages.append({"role": "tool", "tool_call_id": c.get("id") or "", "content": "recorded"})
+                break
+            result = run_tool(fn, args, ctx)
+            record["turns"].append({"tool": fn, "args": args, "result": str(result)[:400]})
+            yield {"event": "tool_result", "data": {"tool": fn, "result": str(result)[:400]}}
+            messages.append({"role": "tool", "tool_call_id": c.get("id") or "", "content": str(result)[:2000]})
+
+        if record["proposal"]:
+            break
+
+    record["driver_replies"] = ctx["driver_replies"]
+    if record["proposal"] is None and not record["turns"]:
+        det = deterministic_turn(ctx)
+        record["turns"].append(det)
+        yield {"event": "fallback", "data": {"reason": "no turns", "turn": det}}
+
+    # Persist
+    now = datetime.now(timezone.utc).isoformat()
+    new_hist = list(history)
+    new_hist.append({"role": "operator", "at": now, "content": human_message})
+    for t in record["turns"]:
+        new_hist.append({"role": "agent", "at": now, "turn": t})
+    save_history(alert_id, new_hist)
+
+    yield {"event": "done", "data": {"mode": record.get("mode", "deterministic"), "turns": len(record["turns"])}}

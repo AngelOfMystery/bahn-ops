@@ -55,6 +55,30 @@ function renderConversation(history) {
   }).join("");
 }
 
+function stateHeadline(r) {
+  if (!r.ok && r.error) return "The agent could not run on this case";
+  if (r.refusal) return "Waiting for you";
+  if (r.proposal && r.proposal.kind === "propose") return "Waiting for you";
+  if (r.proposal && r.proposal.kind === "refuse") return "Waiting for you";
+  return "The agent is still working on this case";
+}
+
+var REFUSAL_PLAIN = {
+  "release document unclear; a quote is not a release":
+    "The site has not confirmed that the signed release is on file. Until it does, the car cannot move.",
+  "site access unconfirmed; vehicle presence is not pickup authority":
+    "Someone reported the car is at the pickup site, but no one has confirmed the driver is allowed to collect it.",
+  "position signal stale; ask the driver before changing a promise":
+    "The driver's last known position is out of date. Ask the driver where they actually are before changing the delivery promise.",
+};
+
+function plainRefusal(r) {
+  var reason = (r.refusal || "").trim();
+  if (REFUSAL_PLAIN[reason]) return REFUSAL_PLAIN[reason];
+  if (!reason) return "";
+  return reason.charAt(0).toUpperCase() + reason.slice(1) + ".";
+}
+
 function summaryFor(r) {
   var history = r.history || [];
   var opTurns = history.filter(function(h){ return h.role === "operator"; }).length;
@@ -64,7 +88,7 @@ function summaryFor(r) {
   // WHERE THIS IS
   var where = "";
   if (r.refusal) {
-    where = "On hold: " + r.refusal + ".";
+    where = plainRefusal(r);
   } else if (r.proposal && r.proposal.summary) {
     where = "A proposal is ready: " + r.proposal.summary;
   } else if (agTurns > 0) {
@@ -82,7 +106,7 @@ function summaryFor(r) {
   // WHAT'S NEXT
   var next = "";
   if (r.refusal) {
-    next = "Ask the driver for the missing fact, or supply the release document from the site. Once the evidence is there, the case can move.";
+    next = "Ask the driver whether they have it, or confirm with the site that it is on file. When the missing piece arrives, the case can move.";
   } else if (r.proposal && r.proposal.kind === "propose" && r.proposal.summary) {
     next = "Approve it \u2014 the effect is: " + (r.proposal.summary) + ". Or ask the agent one more question first.";
   } else if (agTurns > 0) {
@@ -180,14 +204,15 @@ function renderCase(r, env) {
     '.sugg:hover{background:#f4f6f8}' +
     '.empty{color:#6b7280;font-size:13px}' +
     '.env{margin-top:22px;color:#6b7280;font-size:12px;font-family:ui-monospace,monospace}' +
+    '.src-badge{display:inline-block;padding:3px 9px;border-radius:10px;font-size:11px;font-weight:600;letter-spacing:.02em}' +
+    '.src-badge.model{background:#dcfce7;color:#14532d;border:1px solid #86efac}' +
+    '.src-badge.fallback{background:#fef3c7;color:#78350f;border:1px solid #fde68a}' +
+    '.src-badge.unknown{background:#f4f6f8;color:#6b7280;border:1px solid #e4e7ea}' +
     '.back{display:inline-block;margin-bottom:18px;font-size:13px;text-decoration:none}' +
     '</style></head><body>' +
     '<a class="back" href="/">&larr; back to queue</a>' +
-    '<h1>' + esc(r.reference || r.alert_id) + '</h1>' +
-    '<p class="meta">alert ' + esc(r.alert_id) + ' &middot; mode ' + esc(modeLabel) + ' &middot; ' + (r.tools || []).length + ' tools</p>' +
-    '<div class="chips"><span class="chip src">' + esc(r.source_class || "?") + '</span>' +
-    '<span class="chip state">' + esc(r.fact_state || "?") + '</span>' +
-    '<span class="chip">' + esc((r.driver_replies || []).length) + ' driver replies</span></div>' +
+    '<h1>' + esc(stateHeadline(r)) + '</h1>' +
+    '<p class="meta">' + esc(r.reference || r.alert_id) + ' &middot; <span style="color:#9ca3af">' + esc((r.driver_replies || []).length === 0 ? 'no driver replies yet' : (r.driver_replies || []).length + ' driver repl' + ((r.driver_replies || []).length === 1 ? 'y' : 'ies')) + '</span></p>' +
     '<div class="summarybox">' +
       '<div class="sline"><span class="slabel">Where this is</span><span>' + esc(summaryFor(r).where) + '</span></div>' +
       '<div class="sline"><span class="slabel">What\'s next</span><span>' + esc(summaryFor(r).next) + '</span></div>' +
@@ -198,17 +223,22 @@ function renderCase(r, env) {
     '<h2 class="sec">What the agent did</h2>' +
     (traceHtml || '<p class="empty">No turns yet.</p>') +
     '<h2 class="sec">Talk to the agent</h2>' +
-    convHtml +
+    '<div id="convostream">' + convHtml + '</div>' +
     '<p style="margin:8px 0 0;font-size:13px"><a href="/phone" style="color:#6b7280;text-decoration:none">See every message the agent has sent this driver &rarr;</a></p>' +
     '<div class="suggrow" style="margin:8px 0">' + chips + '</div>' +
     '<div class="say">' +
     '<input id="sayin" placeholder="What should the agent do next?" autocomplete="off">' +
     '<button id="saybtn" onclick="say()">Send</button>' +
     '</div>' +
-    '<p class="env">' + (env && env.keyPresent
-      ? 'model ' + esc(model) + ' via ' + esc(provider) + ' &middot; mode ' + esc(modeLabel)
-      : 'running on the deterministic fallback (no model key set) &middot; mode ' + esc(modeLabel)
-    ) + '</p>' +
+    '<p class="env">' +
+      (r.source === 'model'
+        ? '<span class="src-badge model">&#9679; source: model &middot; ' + esc(model) + '</span>'
+        : (r.source === 'deterministic'
+          ? '<span class="src-badge fallback">&#9679; source: deterministic fallback' + (r.model_error ? ' &middot; ' + esc(String(r.model_error).slice(0, 60)) : '') + '</span>'
+          : '<span class="src-badge unknown">&#9679; source: ' + esc(r.source || 'unknown') + '</span>'
+        )
+      ) +
+    '</p>' +
     '<script>' +
     'var ALERT_ID=' + JSON.stringify(r.alert_id) + ';' +
     'async function say(q){' +
@@ -216,11 +246,43 @@ function renderCase(r, env) {
     '  var msg=q!==undefined?q:(inp.value||"");' +
     '  if(!msg.trim())return;' +
     '  var btn=document.getElementById("saybtn");' +
-    '  btn.disabled=true;btn.textContent="Sending...";' +
+    '  btn.disabled=true;btn.innerHTML="<span class=btnspinner></span>Sending...";' +
+    '  var convo=document.getElementById("convostream");' +
+    '  if(!convo){location.reload();return}' +
+    '  var addMsg=function(cls,label,text){' +
+    '    var d=document.createElement("div");d.className="msg "+cls;' +
+    '    d.innerHTML="<div class=who>"+label+"</div><div class=body>"+text+"</div>";' +
+    '    convo.appendChild(d);return d' +
+    '  };' +
+    '  addMsg("op","You",msg);' +
+    '  var agentEl=addMsg("ag","Agent","");' +
+    '  var agentBody=agentEl.querySelector(".body");' +
     '  try{' +
-    '    var res=await fetch("/case/"+encodeURIComponent(ALERT_ID)+"/say",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({message:msg})});' +
-    '    var j=await res.json();' +
-    '    if(j.ok){location.reload()}else{alert("agent failed: "+(j.error||"unknown"));btn.disabled=false;btn.textContent="Send"}' +
+    '    var res=await fetch("/case/"+encodeURIComponent(ALERT_ID)+"/stream",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({message:msg})});' +
+    '    var reader=res.body.getReader();' +
+    '    var decoder=new TextDecoder();' +
+    '    var buffer="";' +
+    '    while(true){' +
+    '      var rd=await reader.read();' +
+    '      if(rd.done)break;' +
+    '      buffer+=decoder.decode(rd.value,{stream:true});' +
+    '      var events=buffer.split("\\n\\n");' +
+    '      buffer=events.pop()||"";' +
+    '      for(var evstr of events){' +
+    '        if(!evstr.startsWith("data: "))continue;' +
+    '        try{' +
+    '          var ev=JSON.parse(evstr.slice(6));' +
+    '          if(ev.event==="token"){agentBody.textContent+=(ev.data.text||"")}' +
+    '          else if(ev.event==="tool_start"){agentBody.textContent+="\\n["+ev.data.tool+"]"}' +
+    '          else if(ev.event==="tool_result"){agentBody.textContent+=" → "+(ev.data.result||"").slice(0,80)}' +
+    '          else if(ev.event==="proposal"){agentBody.textContent+="\\n\\nProposal: "+(ev.data.summary||"")}' +
+    '          else if(ev.event==="fallback"){agentBody.textContent+="\\n(fallback: "+(ev.data.reason||"")+")"}' +
+    '          else if(ev.event==="done"||ev.event==="end"){location.reload();return}' +
+    '          else if(ev.event==="error"){agentBody.textContent+="\\nError: "+(ev.data||"")}' +
+    '        }catch(e){}' +
+    '      }' +
+    '    }' +
+    '    location.reload();' +
     '  }catch(e){alert("agent failed: "+e.message);btn.disabled=false;btn.textContent="Send"}' +
     '}' +
     'document.addEventListener("keydown",function(e){if(e.key==="Enter"&&e.target.id==="sayin")say()});' +

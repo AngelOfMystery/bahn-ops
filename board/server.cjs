@@ -408,6 +408,48 @@ function readJsonBody(q, cb){
 }
 
 h.createServer((q,s)=>{
+  // POST /case/:id/stream — SSE
+  if(q.method==='POST' && q.url.match(/^\/case\/[^\/]+\/stream/)){
+    const m = q.url.match(/^\/case\/([^\/]+)\/stream/);
+    const id = decodeURIComponent(m[1]).replace(/[^A-Za-z0-9_\-]/g,'');
+    return readJsonBody(q, (err, body)=>{
+      if(err){s.writeHead(400,{'content-type':'application/json'});return s.end(JSON.stringify({ok:false,error:'bad json'}))}
+      const message = (body && body.message) || '';
+      if(!message.trim()){s.writeHead(400,{'content-type':'application/json'});return s.end(JSON.stringify({ok:false,error:'message required'}))}
+
+      s.writeHead(200,{
+        'content-type':'text/event-stream',
+        'cache-control':'no-cache',
+        'connection':'keep-alive'
+      });
+
+      const payload = JSON.stringify({alert_id: id, message: message});
+      const py = "import sys,json;msg=json.loads(sys.stdin.read());sys.path.insert(0,'.');from bahn_ops.case_chat import continue_case_streaming;" +
+                 "\nfor ev in continue_case_streaming(msg['alert_id'], msg['message']): print('data: '+json.dumps(ev))";
+
+      try{
+        const child = cp.spawn('python3',['-c',py],{cwd:p.join(__dirname,'..')});
+        child.stdin.write(payload);
+        child.stdin.end();
+
+        let buf='';
+        child.stdout.on('data', chunk=>{
+          buf += chunk.toString();
+          const lines = buf.split('\n');
+          buf = lines.pop() || '';
+          for(const line of lines){
+            if(line.startsWith('data: ')){ s.write(line + '\n\n'); }
+          }
+        });
+        child.stdout.on('end', ()=>{ s.end('data: {"event":"end"}\n\n'); });
+        child.stderr.on('data', err=>{ s.write('data: ' + JSON.stringify({event:'error', data: err.toString().slice(0,200)}) + '\n\n'); });
+      }catch(e){
+        s.write('data: ' + JSON.stringify({event:'error', data: String(e.message||e).slice(0,200)}) + '\n\n');
+        s.end();
+      }
+    });
+  }
+
   // POST /case/:id/say
   if(q.method==='POST' && q.url.match(/^\/case\/[^\/]+\/say/)){
     const m = q.url.match(/^\/case\/([^\/]+)\/say/);
@@ -431,6 +473,12 @@ h.createServer((q,s)=>{
         "h=r['history'];r['turns']=[x.get('turn') for x in h if x.get('role')=='agent' and x.get('turn')];" +
         "r['proposal']=r['turns'][-1] if r['turns'] else None;" +
         "r['mode']='conversation' if h else 'new';" +
+        "import pathlib as _pl;" +
+        "_ours=_pl.Path('bahn_ops/ours.jsonl');" +
+        "_rows=[__import__('json').loads(l) for l in _ours.read_text().splitlines() if l.strip()] if _ours.exists() else [];" +
+        "_match=next((x for x in _rows if x.get('alert_id')=='" + id + "'), None);" +
+        "r['source']=(_match or {}).get('source','');" +
+        "r['model_error']=(_match or {}).get('model_error','');" +
         "print(json.dumps(r))"],
         {cwd:p.join(__dirname,'..'),timeout:30000,encoding:'utf8'});
       r=JSON.parse(out);
