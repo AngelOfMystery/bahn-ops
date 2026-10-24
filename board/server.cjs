@@ -135,8 +135,8 @@ function renderCard(r){
       (r.oevFirst?'<p class=ge>from <code>'+e(r.oevFirst)+'</code>'+(r.oev>1?' and '+(r.oev-1)+' more':'')+'</p>':'')+
       '</div>'+effect+
       '<div class=a><span class=dslot></span>'+
-      '<button onclick="decide(\''+e(r.aid)+'\',\'accept\',\''+e(r.cmd||'')+'\')">Accept</button>'+
-      '<button onclick="decide(\''+e(r.aid)+'\',\'change\',\''+e(r.cmd||'')+'\')">Change</button>'+
+      '<button class="act-accept" onclick="decide(\''+e(r.aid)+'\',\'accept\',\''+e(r.cmd||'')+'\')">Accept</button>'+
+      '<button class="act-change" onclick="decide(\''+e(r.aid)+'\',\'change\',\''+e(r.cmd||'')+'\')">Change</button>'+
       caseLink+'</div></div>';
   }
 
@@ -145,7 +145,7 @@ function renderCard(r){
     'Click below to run it on just this alert.</div>'+
     '<div class=a><span class=dslot></span>'+
     '<button class=runagent onclick="runAgent(\''+e(r.aid)+'\')">Run agent on this case</button>'+
-    '<button onclick="decide(\''+e(r.aid)+'\',\'change\',\'\')">Change</button>'+
+    '<button class="act-change" onclick="decide(\''+e(r.aid)+'\',\'change\',\'\')">Change</button>'+
     caseLink+'</div></div>';
 }
 
@@ -213,7 +213,7 @@ function renderPage(){
     ' catch(e){btn.disabled=false;btn.textContent="Run agent on this case";alert("agent failed: "+e.message)}}'+
     'async function loadDecisions(){try{const r=await fetch("/decisions");const d=await r.json();const by={};for(const x of d)by[x.alert_id]=x;'+
     ' for(const el of document.querySelectorAll("[data-aid]")){const dec=by[el.getAttribute("data-aid")];const slot=el.querySelector(".dslot");if(!slot)continue;'+
-    ' if(dec){slot.innerHTML="<span class=chip dc>"+dec.decision+" "+dec.at.slice(11,16)+"</span>";el.querySelectorAll(".a button").forEach(b=>b.disabled=true)}}}catch(e){}}'+
+    ' if(dec){slot.innerHTML="<span class=chip dc>"+dec.decision+" "+dec.at.slice(11,16)+"</span>";el.querySelectorAll(".act-accept,.act-change").forEach(b=>b.style.display="none")}}}catch(e){}}'+
     'document.addEventListener("DOMContentLoaded",loadDecisions);'+
     '</script>'+
     '<h1>Needs a person</h1><p style="margin:0 0 22px;font-size:13px"><a href="/phone" style="color:#6b7280;text-decoration:none">Phone log &rarr;</a></p>'+
