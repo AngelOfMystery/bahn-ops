@@ -6,3 +6,7 @@ __pycache__/
 *.iml
 /check.sh
 /script.sh
+*.bak
+.rentry_cookies
+page.html
+response.json
