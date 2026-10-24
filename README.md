@@ -1,5 +1,48 @@
 # Bahn Ops Controller
 
+**What this is.** Bahn moves used cars with freelance drivers, and every
+delivery is a chain of people who do not work for Bahn: the seller holding the
+car, the driver, the ferry line, whoever signs at the other end. When one link
+breaks, a person in operations rebuilds the whole chain from phone logs.
+
+This is the room where the chain is visible, and one agent that does the first
+link's work by itself.
+
+**What the agent does.** It reads the open alerts in Bahn's dataset, pulls the
+order, notes, messages, documents, reservations and driver rows attached to
+each, and writes one proposal per alert. Every proposal carries the ids it
+relied on, plus two classifications per fact: who said it (app, site, driver,
+ferry, document, billing, customer) and what state it is in (stale, reported,
+quoted, missing, disputed, conflicting). When the evidence does not support an
+action it stops and says why instead of proposing.
+
+**Why the classifications matter.** Bahn's own operations context warns that a
+quote can be mistaken for a booking, or a driver message for a fresh location.
+The board keeps those distinctions visible, so a person checks the agent's
+reasoning instead of rebuilding it.
+
+**What the board shows.** Only the alerts that need a person. Each card carries
+the reason it surfaced, the agent's proposal, the rationale, the evidence ids,
+the source and state chips, and where the agent declined a stop reason in place
+of the Accept button. Above the queue, one line accounts for the alerts that are
+hidden: how many were resolved, how many acknowledged, and how many have no
+reason recorded in Bahn's own data.
+
+**The decision loop.** Accept or Change writes a decision to
+bahn_ops/decisions.jsonl with a timestamp and the approved command. Reload the
+page and the decision is still there. Asking and looking up need no permission;
+changing anything waits for a person.
+
+**The model.** The proposal loop calls a language model per alert. With no key
+it runs a deterministic path and records why in model_error; with a key each row
+records source: model. The fallback exists so the control room is never empty,
+and it records its own reason.
+
+Prompt Operations Hackathon, 24-25 Oct 2026. Deadline Sunday 15:00 local.
+
+---
+
+
 Prompt Operations Hackathon, 24-25 Oct 2026.
 Bahn challenge: an agentic operations controller for car transport.
 
