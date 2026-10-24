@@ -192,13 +192,35 @@ the only thing that said so.
 
 ## Which coding agents, and what each got wrong
 
-Three, used for different jobs, all named because the brief asks which.
+The build happened in four phases. None of them was planned. Each one is here because the previous one stopped working, and the shape of the code we shipped is the shape of that sequence.
 
-**Claude Code**, for the agent loop and the board route. Given: the brief, `OPERATIONS-CONTEXT.md`, the schema, and the current `agent.py`. It produced a working loop in one pass, but its first refusal guard fired on a status string instead of on evidence, which would have blocked nine valid cases. Caught by re-running the sweep.
+**Phase one — my own agent setup.** I started with an agent harness I had already built and used on other projects. It runs commands, reads files, and writes code. It got the foundations in: the repo skeleton, the dataset loader, the first `controller.py`, and the first FastAPI shell. Then it crashed. Not metaphorically — the harness itself broke, threw an exception mid-run, and would not restart. Whatever was on disk when it died is what I had. That was `controller.py` and an empty `app/main.py`.
 
-**DeepSeek (VIBE bridge)**, for the schema reading and the evidence boundary work. Given: the file tree and the raw dataset. It misread `next_action` as an instruction twice before the schema's own sentence at line 306 settled it. The fix was a heading change, not a code change.
+**Phase two — Claude Code, until it hit the rate limit.** I switched to Claude Code on the free tier. It fixed what my own agent had left half-finished: the `verify.sh` gate, the first board page, the working `/decide` endpoint, and the `case_chat.py` loop. It also introduced the two mistakes that cost the most time: a `.gitignore` rule that hid `verify.sh` from a fresh clone (I didn't catch that until hour fourteen), and a source classifier that read `evidence_refs` prefixes and called nine of twelve alerts conversation-sourced — the exact mistake Bahn warns about in `OPERATIONS-CONTEXT.md`. Both caught by running the fresh-clone test and re-reading the brief.
 
-**GPT-family (Codex)**, for the FastAPI scaffold and the `verify.sh` gate. Given: the same brief and the initial `check.sh`. It reproduced the scaffold, but its output assumed a README it did not read, so the first `verify.sh` skipped the board entirely. Caught by running it.
+Then Claude hit the free tier's message cap. No more messages that day.
+
+**Phase three — chat.deepseek.com, context problems, and then flow.** I moved to the DeepSeek web app. This was the phase with the steepest learning curve, and it was not about the model's capability. It was about context.
+
+The web app doesn't have a shell. It doesn't read the repo. It doesn't remember what happened last message if you open a new conversation. Every single command had to be pasted back and forth — I run it in Git Bash, I paste the output, it responds. And because the free tier caps at ~100 messages a day across a conversation history, I kept hitting a point where the model had *just* seen the file it needed and then lost it in a summarized context window. Three hours of "run this script, paste the output, no wait, that's the old version of the file, here's the current one, ok now run it again."
+
+But it got into a flow. The trick was: every prompt carried the constraint, and every response came back with a command whose output was *self-diagnosing*. "Here is the exact output. Name the first causal error and give one command." That prompt pattern produced one useful fix per round trip, roughly every four minutes. Six hours of that produced the executor, the streaming SSE endpoint, the four UX passes, and the six bugs caught in tests before the video.
+
+**Phase four — back to Claude for the docs.** Once the code was stable, I went back to Claude for the README and PROCESS.md writing, since the free tier message cap had reset. It was the right tool for the right phase.
+
+**What was thrown away across all four phases.** The first `controller.py`, entirely. The starter Next.js app, unread. A source-classification map built on guessed field names (`kind`, `category`) that matched one alert in twelve — replaced after a probe printed the real field (`signal`). A multi-line patch anchor against a file that had been minified by earlier patches — cost two failed attempts before switching to single-line matching. A diagnostic that counted chip occurrences by grepping lines instead of matches, which reported 1 chip on a page with 12. A handover strip that read a module-level decisions lookup frozen at server startup, so it showed "no decision" for decisions it had just written.
+
+**The pattern.** Every one of those bugs was found by reading output, not by trusting intent. The code was often right; the assumption about the world was wrong, and the output was the only thing that said so. That was true whether the agent was my own harness, Claude, or DeepSeek. The tool didn't matter. The discipline did.
+
+**What each phase was actually good for.**
+
+- **My own agent** — bootstrapping. Fast on the skeleton, no social friction.
+- **Claude Code** — the messy middle. Fixed the half-finished first attempt, wrote real code, made specific mistakes that were easy to find by running the tests.
+- **chat.deepseek.com** — the long haul. Slow per round trip, but steady, and it caught the bugs that only show up in the fourth hour of running the same test script.
+- **Claude again** — the writing. The register of a README is different from the register of code. Both are fine; only one is a doc.
+
+**What I would tell the next team.** Do not plan on any single tool surviving a two-day build. The honest state of an agent-assisted hackathon is: you will change tools mid-build because one crashes, one rate-limits, one loses context, and one just doesn't fit how you think. The submission is not what each tool did. It is what survived after all of them.
+
 
 ## The measured state, replacing what the earlier sections said
 
