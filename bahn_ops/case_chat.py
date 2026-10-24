@@ -203,9 +203,11 @@ def _system_message(alert, order, refusal):
     )
     if refusal:
         base += (
-            "The evidence on this case currently does not support an action. "
-            "You may ask the driver for the missing fact, or explain to the operator "
-            "what specific evidence would unblock the case. Do not propose a write. "
+            "This case is on hold: the evidence does not support a write action yet. "
+            "You MAY still: read the order, read messages, read reservations, ask the driver "
+            "questions, and answer the operator. You MAY NOT propose_action or claim you "
+            "have changed anything. When the operator asks you to ask the driver something, "
+            "call ask_driver. When they ask what would unblock the case, answer that. "
         )
     base += "Case: " + json.dumps({"alert": alert, "order": order}, ensure_ascii=False)
     return {"role": "system", "content": base}
@@ -389,18 +391,48 @@ def continue_case(alert_id, human_message):
     }
 
     if not tools:
-        # Refused case: the model can still answer questions (no tools) if key is present.
-        payload, merr = model_turn(messages, [])
+        # Refused case: no propose_action available, but ask_driver and read tools
+        # ARE safe to offer. The refusal guard blocks writes, not questions.
+        read_tools = [t for t in tool_definitions() if t["name"] in ("get_order", "get_messages", "get_reservations", "ask_driver")]
+        record["tools"] = [t["name"] for t in read_tools]
+        payload, merr = model_turn(messages, read_tools)
         if payload and payload.get("choices"):
-            content = (payload["choices"][0].get("message") or {}).get("content") or ""
+            choice = payload["choices"][0]
+            msg = choice.get("message") or {}
+            tcs = msg.get("tool_calls") or []
+            for c in tcs:
+                fn = (c.get("function") or {}).get("name")
+                raw = (c.get("function") or {}).get("arguments") or "{}"
+                try:
+                    args = json.loads(raw)
+                except json.JSONDecodeError:
+                    args = {}
+                result = run_tool(fn, args, ctx)
+                record["turns"].append({"tool": fn, "args": args, "result": str(result)[:400]})
+                record["driver_replies"] = ctx["driver_replies"]
+            content = msg.get("content") or ""
             if content:
                 record["turns"].append({"assistant": content[:1200]})
+            if not record["turns"]:
+                record["turns"].append({"assistant": "I read the records but found nothing new to report."})
         if not record["turns"]:
+            # Real fallback: DO the work, don't explain that we can't.
+            # If the operator's message is about the driver, ask the driver.
+            asked = False
+            low = (human_message or "").lower()
+            if any(w in low for w in ("driver", "ask", "where", "safe", "release", "paper")):
+                q = human_message[:140] if "?" in human_message else human_message[:140] + "?"
+                run_tool("ask_driver", {"question": q}, ctx)
+                asked = True
+            if not asked:
+                run_tool("ask_driver", {"question": "Can you confirm your current location and status?"}, ctx)
+            record["driver_replies"] = ctx["driver_replies"]
             record["turns"].append({
                 "assistant": (
-                    "This case is on hold because: " + str(refusal) + ". "
-                    "The evidence that would unblock it: a fresh position signal from the driver app, "
-                    "or a signed release document from the site. I can ask the driver if you want."
+                    "I sent the driver your question. Reply is above. "
+                    "The case itself is still on hold: " + str(refusal) + ". "
+                    "To lift the hold I need a signed release document from the site "
+                    "or a fresh position signal from the driver app."
                 )
             })
             record["mode"] = "deterministic"
