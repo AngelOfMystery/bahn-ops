@@ -238,10 +238,20 @@ def _build_ctx(alert_id):
 
 def _system_message(alert, order, refusal):
     base = (
-        "You are the Bahn operations agent for one case. Do the cheap work first: "
-        "read the order and messages, ask the driver before changing any promise, "
-        "then hand a person exactly one decision with propose_action. "
-        "Never contact a customer. Never execute anything. "
+        "You are the Bahn operations agent for one case. "
+        "Do the cheap work first: read the order and messages, ask the driver a question "
+        "with ask_driver if the records are not enough, and then hand a person exactly "
+        "one decision using propose_action.\n"
+        "RULES:\n"
+        "1. Never contact a customer. Never execute a booking, a date change, or a cost.\n"
+        "2. After ask_driver returns, DO NOT repeat the driver's reply in your own voice. "
+        "The operator can see the tool result in the trace. Instead, either (a) call ask_driver "
+        "again if you need one more fact, or (b) call propose_action with a decision the "
+        "operator can act on.\n"
+        "3. Your own message should be one short sentence that tells the operator what you "
+        "learned that they could not already see, or why you are proposing what you are "
+        "proposing. If you have nothing to add beyond the trace, call propose_action directly "
+        "with no text.\n"
     )
     if refusal:
         base += (
@@ -635,6 +645,7 @@ def continue_case_streaming(alert_id, human_message):
             messages.append({"role": "tool", "tool_call_id": c.get("id") or "", "content": str(result)[:2000]})
 
         if record["proposal"]:
+            record["mode"] = "model"
             break
 
     record["driver_replies"] = ctx["driver_replies"]
@@ -651,4 +662,23 @@ def continue_case_streaming(alert_id, human_message):
         new_hist.append({"role": "agent", "at": now, "turn": t})
     save_history(alert_id, new_hist)
 
-    yield {"event": "done", "data": {"mode": record.get("mode", "deterministic"), "turns": len(record["turns"])}}
+    # Save the actual mode to ours.jsonl so the case page badge is honest
+    import pathlib as _pl
+    ours_path = _pl.Path("bahn_ops/ours.jsonl")
+    actual_mode = record.get("mode", "model")
+    if ours_path.exists():
+        rows = []
+        for line in ours_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+                if row.get("alert_id") == alert_id:
+                    row["source"] = actual_mode
+                    row["model_error"] = record.get("model_error", "")
+                rows.append(row)
+            except json.JSONDecodeError:
+                continue
+        ours_path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
+
+    yield {"event": "done", "data": {"mode": actual_mode, "turns": len(record["turns"])}}
