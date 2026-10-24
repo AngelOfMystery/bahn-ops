@@ -31,8 +31,10 @@ function renderPhone(data) {
         '</form>' +
         '</div>';
     }).join("");
+    var drvName = d.driver_name ? ' — ' + d.driver_name : '';
+    var ordRef  = d.order_reference ? ' · on ' + d.order_reference : '';
     return '<section class="driver">' +
-      '<h2>' + esc(d.driver_id) + ' <small>' + (d.thread || []).length + ' message' + ((d.thread || []).length === 1 ? '' : 's') + '</small></h2>' +
+      '<h2>' + esc(d.driver_id) + esc(drvName) + esc(ordRef) + ' <small>' + (d.thread || []).length + ' message' + ((d.thread || []).length === 1 ? '' : 's') + '</small></h2>' +
       (rows || '<p class="empty">No messages yet.</p>') +
       '</section>';
   }).join("");

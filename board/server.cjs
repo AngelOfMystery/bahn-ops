@@ -35,6 +35,32 @@ const P=(()=>{
 
 const IDX={};for(const a of D)if(a.id)IDX[a.id]=a;
 const city=i=>{const a=IDX[i]||{};return a.city||a.locality||a.town||''};
+
+// Human-readable labels for chips. The underlying values stay the same.
+const SOURCE_LABEL = {
+  app:'from the driver\'s app',
+  site:'from the pickup or delivery site',
+  driver:'from the driver',
+  ferry:'from the ferry line',
+  document:'from a document',
+  billing:'from billing',
+  customer:'from the customer',
+  conversation:'from a conversation',
+  message:'from a message',
+  operator:'from an operator',
+  unknown:'source unclear',
+};
+const STATE_LABEL = {
+  stale:'stale — needs a fresh check',
+  reported:'reported, not confirmed',
+  quoted:'quoted, not booked',
+  missing:'missing',
+  disputed:'disputed by someone',
+  conflicting:'two records disagree',
+  confirmed:'confirmed',
+};
+const sourceLabel = k => SOURCE_LABEL[k] || k || 'source unclear';
+const stateLabel = k => STATE_LABEL[k] || k || 'state unclear';
 const OM={};for(const o of O)OM[o.id]=o;
 
 const _oursExists=(()=>{try{return f.existsSync(OURS)}catch(e){return false}})();
@@ -140,10 +166,12 @@ function renderCard(r){
   const triggered = String(r.w||'').slice(0,19).replace('T',' ');
   const factWhen = (r.ep && (r.ep.pc || r.ep.dc)) ? String(r.ep.pc || r.ep.dc).slice(0,19).replace('T',' ') : triggered;
   const factSource = (r.ep && (r.ep.ps || r.ep.ds)) ? String(r.ep.ps || r.ep.ds) : r.sc;
+  const srcFull = factSource || r.sc || '';
+  const stFull = r.fs || '';
   const chips='<div class=chips>'+
-    (r.sc?'<span class=chip title="source: '+e(factSource)+' — fact recorded at '+e(factWhen)+' (alert triggered '+e(triggered)+')">'+e(r.sc)+'</span>':'')+
-    (r.fs?'<span class="chip st" title="state: '+e(r.fs)+' — fact recorded at '+e(factWhen)+' (alert triggered '+e(triggered)+')">'+e(r.fs)+'</span>':'')+
-    (r.oev?'<span class="chip ev" title="'+r.oev+' evidence references cited by this proposal">'+r.oev+' src</span>':'')+
+    (srcFull?'<span class=chip title="'+e(srcFull)+' — recorded at '+e(factWhen)+' (alert raised '+e(triggered)+')">'+e(sourceLabel(srcFull))+'</span>':'')+
+    (stFull?'<span class="chip st" title="'+e(stFull)+' — recorded at '+e(factWhen)+' (alert raised '+e(triggered)+')">'+e(stateLabel(stFull))+'</span>':'')+
+    (r.oev?'<span class="chip ev" title="'+r.oev+' pieces of evidence cited by the suggestion">'+r.oev+' source'+(r.oev===1?'':'s')+'</span>':'')+
     '</div>';
   const caseLink='<a class=caselink href="/case/'+encodeURIComponent(r.aid)+'">Open case &rarr;</a>';
   const header='<div class=h><b>'+e(r.r)+'</b><span>'+e(r.f)+' &rarr; '+e(r.t)+'</span><small>'+e(r.s)+'</small></div>';
@@ -428,7 +456,7 @@ h.createServer((q,s)=>{
   // GET /phone -- all driver threads
   if(q.url==='/phone'){
     try{
-      const py = "import sys,json;sys.path.insert(0,'.');from bahn_ops.inbox import all_drivers,thread;print(json.dumps({'drivers':[{'driver_id':d,'thread':thread(d)} for d in all_drivers()]}))";
+      const py = "import sys,json;sys.path.insert(0,'.');from bahn_ops.inbox import all_drivers,thread;from bahn_ops.agent import load;drivers={d.get('id'):d for d in load('drivers') if d.get('id')};orders={o.get('id'):o for o in load('orders') if o.get('id')};out=[]\nfor d in all_drivers():\n  t=thread(d)\n  oid=None\n  for m in t:\n    if m.get('order_id'): oid=m['order_id']; break\n  drv=drivers.get(d) or {}\n  o=orders.get(oid) or {}\n  out.append({'driver_id':d,'driver_name':(drv.get('full_name') or drv.get('name') or ''),'order_reference':(o.get('reference') or ''),'order_id':oid,'thread':t})\nprint(json.dumps({'drivers':out}))";
       const out = cp.execFileSync('python3',['-c',py],{cwd:p.join(__dirname,'..'),timeout:30000,encoding:'utf8'});
       const data = JSON.parse(out);
       s.writeHead(200,{'content-type':'text/html;charset=utf-8'});
