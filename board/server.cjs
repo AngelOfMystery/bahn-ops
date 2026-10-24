@@ -1,5 +1,6 @@
 const { render } = require('./page.js');
 const { renderCase } = require('./case.js');
+const { renderPhone } = require('./phone.js');
 const h=require('http'),f=require('fs'),p=require('path'),cp=require('child_process');
 const DEC=p.join(__dirname,'..','bahn_ops','decisions.jsonl');
 const OURS=p.join(__dirname,'..','bahn_ops','ours.jsonl');
@@ -215,7 +216,7 @@ function renderPage(){
     ' if(dec){slot.innerHTML="<span class=chip dc>"+dec.decision+" "+dec.at.slice(11,16)+"</span>";el.querySelectorAll(".a button").forEach(b=>b.disabled=true)}}}catch(e){}}'+
     'document.addEventListener("DOMContentLoaded",loadDecisions);'+
     '</script>'+
-    '<h1>Needs a person</h1>'+
+    '<h1>Needs a person</h1><p style="margin:0 0 22px;font-size:13px"><a href="/phone" style="color:#6b7280;text-decoration:none">Phone log &rarr;</a></p>'+
     '<p class=m><b>'+Q.length+'</b> open &middot; <b>'+proposed+'</b> with a proposal &middot; <b>'+stopped+'</b> where the agent stopped &middot; <b>'+notrun+'</b> the agent has not run</p>'+
     QUIET+HIDBLOCK+
     (cards||'<p>Nothing waiting.</p>');
@@ -334,6 +335,41 @@ h.createServer((q,s)=>{
       return s.end(JSON.stringify({ok:true,row}));
     });
     return;
+  }
+
+  // GET /phone -- all driver threads
+  if(q.url==='/phone'){
+    try{
+      const py = "import sys,json;sys.path.insert(0,'.');from bahn_ops.inbox import all_drivers,thread;print(json.dumps({'drivers':[{'driver_id':d,'thread':thread(d)} for d in all_drivers()]}))";
+      const out = cp.execFileSync('python3',['-c',py],{cwd:p.join(__dirname,'..'),timeout:30000,encoding:'utf8'});
+      const data = JSON.parse(out);
+      s.writeHead(200,{'content-type':'text/html;charset=utf-8'});
+      return s.end(renderPhone(data));
+    }catch(e){
+      s.writeHead(500,{'content-type':'text/html;charset=utf-8'});
+      return s.end('<pre>phone log error: '+e.message+'</pre>');
+    }
+  }
+
+  // POST /phone/reply -- operator override
+  if(q.method==='POST' && q.url==='/phone/reply'){
+    return readJsonBody(q, (err, body)=>{
+      if(err){s.writeHead(400,{'content-type':'application/json'});return s.end(JSON.stringify({ok:false,error:'bad json'}))}
+      const qid = (body && body.question_id) || '';
+      const reply = (body && body.reply) || '';
+      if(!qid || !reply.trim()){s.writeHead(400,{'content-type':'application/json'});return s.end(JSON.stringify({ok:false,error:'question_id and reply required'}))}
+      try{
+        const payload = JSON.stringify({qid, reply});
+        const py = "import sys,json;d=json.loads(sys.stdin.read());sys.path.insert(0,'.');from bahn_ops.inbox import override;print(json.dumps(override(d['qid'],d['reply'])))";
+        const out = cp.execFileSync('python3',['-c',py],{cwd:p.join(__dirname,'..'),input:payload,timeout:30000,encoding:'utf8'});
+        const record = JSON.parse(out);
+        s.writeHead(record.ok?200:400,{'content-type':'application/json'});
+        return s.end(JSON.stringify(record));
+      }catch(e){
+        s.writeHead(500,{'content-type':'application/json'});
+        return s.end(JSON.stringify({ok:false,error:String(e.message||e).slice(0,300)}));
+      }
+    });
   }
 
   s.writeHead(200,{'content-type':'text/html;charset=utf-8'});
