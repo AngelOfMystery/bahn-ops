@@ -22,7 +22,7 @@ reason it surfaced, the agent's proposal, the rationale, the evidence ids, and
 two classifications per fact — *who said it* (app, site, driver, ferry,
 document, billing, customer) and *what state it is in* (stale, reported,
 quoted, missing, disputed, conflicting). Where the evidence does not support
-an action, the card shows **Agent stopped** with the missing fact instead of
+an action, the card shows **Not ready for action** with the missing fact instead of
 an Accept button.
 
 Above the queue, two collapsed summaries account for everything not on the
@@ -149,6 +149,28 @@ The build has been tested with `google/gemini-2.5-flash-lite` via AnyAPI.
 lowering it truncates reasoning models before they answer.
 
 ## How it works
+
+### After you decide
+
+Accepting a proposal writes a decision to `bahn_ops/decisions.jsonl` with a timestamp, then fires `bahn_ops/execute.py` in the background. The card's strip changes from "Executing `alert.resolve`..." to **"Executed at HH:MM:SS: Alert marked resolved. No customer contacted."**
+
+Three strip states, all visible:
+
+- **Green** — the command ran. Effect shown with a timestamp.
+- **Amber** — the command is not on the executor's allowlist. It doesn't run. The strip says "Waiting on a person — needs an operator's OK before it runs."
+- **Red** — the command would contact a customer. It's refused. The strip says "REFUSED · Customer contact requires explicit operator approval."
+
+The allowlist is the trust boundary. Adding a command to `EXECUTABLE_EFFECTS` is how trust gets extended, one action class at a time.
+
+### The phone log
+
+When the agent asks a driver a question, the message lands in `/phone` with a `question_id`. The scripted reply lands with a `reply_id`. An operator can override the reply as if they were the driver — the old reply is marked `superseded`, the new one `operator_override`, nothing is deleted. The brief allows a simulated driver; this design makes visible what was simulated, on what channel, and at what time.
+
+### Streaming
+
+The agent streams its reply live. `/case/:id/stream` is an SSE endpoint that pushes `tool_start`, `tool_result`, `token`, `proposal`, and `done` events as the loop runs. The case page reads the stream and appends tokens to the conversation in real time. Watch the agent call `ask_driver`, get the reply, and compose its response — word by word.
+
+The agent speaks any OpenAI-compatible endpoint. See [Bring your own model](#bring-your-own-model).
 
 The agent's three disciplines, visible on every card:
 
