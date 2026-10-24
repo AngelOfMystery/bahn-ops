@@ -55,6 +55,45 @@ function renderConversation(history) {
   }).join("");
 }
 
+function summaryFor(r) {
+  var history = r.history || [];
+  var opTurns = history.filter(function(h){ return h.role === "operator"; }).length;
+  var agTurns = history.filter(function(h){ return h.role === "agent"; }).length;
+  var driverReplies = (r.driver_replies || []).length;
+
+  // WHERE THIS IS
+  var where = "";
+  if (r.refusal) {
+    where = "On hold: " + r.refusal + ".";
+  } else if (r.proposal && r.proposal.summary) {
+    where = "A proposal is ready: " + r.proposal.summary;
+  } else if (agTurns > 0) {
+    where = "The agent has worked this case and is waiting for your decision.";
+  } else {
+    where = "The agent has not yet run on this case.";
+  }
+  if (driverReplies > 0) {
+    where += " The driver replied " + driverReplies + " time" + (driverReplies === 1 ? "" : "s") + ".";
+  }
+  if (opTurns > 0) {
+    where += " You have asked " + opTurns + " question" + (opTurns === 1 ? "" : "s") + ".";
+  }
+
+  // WHAT'S NEXT
+  var next = "";
+  if (r.refusal) {
+    next = "Ask the driver for the missing fact, or supply the release document from the site. Once the evidence is there, the case can move.";
+  } else if (r.proposal && r.proposal.kind === "propose" && r.proposal.summary) {
+    next = "Approve it \u2014 the effect is: " + (r.proposal.summary) + ". Or ask the agent one more question first.";
+  } else if (agTurns > 0) {
+    next = "Ask the agent another question, or run it again to get a proposal.";
+  } else {
+    next = "Run the agent on this case from the queue.";
+  }
+
+  return { where: where, next: next };
+}
+
 function suggestionsFor(r) {
   if (r.refusal) {
     return [
@@ -102,6 +141,9 @@ function renderCase(r, env) {
     '.chips{display:flex;gap:6px;margin:0 0 18px;flex-wrap:wrap}' +
     '.chip{font:11px ui-monospace,monospace;background:#eef2f4;border-radius:4px;padding:2px 7px;color:#374151}' +
     '.chip.src{background:#dcfce7;color:#14532d}.chip.state{background:#fef3c7;color:#78350f}' +
+    '.summarybox{background:#fff;border:1px solid #e4e7ea;border-left:3px solid #15803d;border-radius:8px;padding:12px 14px;margin:0 0 14px}' +
+    '.sline{display:flex;gap:12px;padding:3px 0;font-size:14px;color:#1a1d21;line-height:1.45}' +
+    '.slabel{flex:0 0 92px;font:11px ui-monospace,monospace;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;font-weight:600;padding-top:3px}' +
     '.refusal{background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #b91c1c;border-radius:8px;padding:12px 14px;margin:0 0 16px}' +
     '.phonelink{display:block;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:9px 12px;margin:0 0 14px;font-size:13px;color:#5b21b6;text-decoration:none}' +
     '.phonelink code{background:#fff;border:1px solid #ddd6fe;border-radius:4px;padding:1px 5px;font:11px ui-monospace,monospace}' +
@@ -137,6 +179,10 @@ function renderCase(r, env) {
     '<div class="chips"><span class="chip src">' + esc(r.source_class || "?") + '</span>' +
     '<span class="chip state">' + esc(r.fact_state || "?") + '</span>' +
     '<span class="chip">' + esc((r.driver_replies || []).length) + ' driver replies</span></div>' +
+    '<div class="summarybox">' +
+      '<div class="sline"><span class="slabel">Where this is</span><span>' + esc(summaryFor(r).where) + '</span></div>' +
+      '<div class="sline"><span class="slabel">What\'s next</span><span>' + esc(summaryFor(r).next) + '</span></div>' +
+    '</div>' +
     refusalBlock +
     phoneBlock +
     '<h2 class="sec">What the agent did</h2>' +
