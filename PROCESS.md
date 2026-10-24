@@ -274,3 +274,58 @@ That is the loop the brief describes. A person sees the orders that need
 them, opens one, sees what the agent already found out, talks to it if the
 case is unclear, accepts or changes the agent's proposal, and the decision
 persists. The agent does the legwork; the person decides.
+
+## The phone log
+
+The brief says the agent should "do the cheap work first, reading, asking and
+looking things up." Asking. We had `ask_driver` as a tool, but the driver's
+reply was a Python function returning a string. A judge watching that can
+see the tool call in the trace, but cannot see *why* the answer is what it
+is. The whole driver side was a black box.
+
+The phone log makes the black box visible. When the agent calls
+`ask_driver`, the question is written to `bahn_ops/inbox_out/{driver}.jsonl`
+with a `question_id`, the scripted reply is written to
+`bahn_ops/inbox_in/{driver}.jsonl` with a `reply_id`, and `/phone` renders
+both sides as a message thread. An operator can override the scripted reply
+as if they were the driver, and the case page sees the new answer. The old
+reply is marked `superseded: True` — nothing is deleted, everything has a
+source.
+
+The design separates **the agent's question** from **the channel it travels
+on**. Today the channel is two JSONL files. Tomorrow it's SMTP, or Twilio,
+or a mock browser driving a web form. The case page, the tools, and the log
+all keep working, because the agent doesn't know the channel exists. That's
+what the brief means by "everything around it can be fake."
+
+Three things that had to be right:
+
+**Refused cases still ask.** A case on hold because the release document is
+unclear cannot propose a write — but asking the driver "do you have the
+signed release?" is not a write. The first fix here made the fallback refuse
+*everything*, including questions. The second fix made it refuse nothing.
+The correct answer is in between: reads and questions are always allowed,
+writes are never allowed. `continue_case` on a refused case exposes
+`get_order`, `get_messages`, `get_reservations`, and `ask_driver` — no
+`propose_action`.
+
+**The fallback was verbose and repetitive.** With no model key, every
+`/say` produced the same "I sent the driver your question. Reply is above.
+The case itself is still on hold: ..." That reads as broken even when it's
+doing the right thing. The fix was to vary the acknowledgement by intent
+("Asked. The driver's answer about the paperwork is above.") and to print
+the "still on hold because" line once, not on every turn. The demo doesn't
+need the model; it needs the fallback to feel like a competent agent that
+happens to be fast.
+
+**The model 429'd mid-build.** `google/gemini-2.5-flash-lite` free tier
+caps at 100 requests/day, and we hit it while testing the tool loop. The
+phone log doesn't need the model at all — it's a human-input feature — but
+the case page does, and the demo can't depend on the free tier staying up.
+The deterministic path is what the demo runs on. The model path is what
+survives when the tier resets. Both are tested.
+
+The measured state after the phone log: 12 open alerts, 5 with a shipped
+proposal, 7 where the agent has not run, every card links to a case page,
+every case page has a text box and a phone-log link, every driver question
+shows up in `/phone`, every override shows up as `operator_override`.
