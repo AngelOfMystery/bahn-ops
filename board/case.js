@@ -238,6 +238,7 @@ function renderCase(r, env) {
           : '<span class="src-badge unknown">&#9679; source: ' + esc(r.source || 'unknown') + '</span>'
         )
       ) +
+    '<span style="color:#9ca3af;font-size:11px;margin-left:8px">(configure in .env)</span>' +
     '</p>' +
     '<script>' +
     'var ALERT_ID=' + JSON.stringify(r.alert_id) + ';' +
