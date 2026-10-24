@@ -41,12 +41,14 @@ const live=_oursExists?_all:P;
 const PA={},PO={};
 for(const q of live){if(q.alert_id)PA[q.alert_id]=q;if(q.order_id)PO[q.order_id]=q}
 
+
 const S={critical:0,high:1,medium:2,low:3};
 
 function buildCard(a){
   const o=OM[a.order_id]||{};
   const q=PA[a.id]||PO[a.order_id]||{};
   const hasProposal=!!(q.summary || q.stops_because);
+  const decForAlert = (()=>{ try{ for(const x of LD()){ if(x.alert_id===a.id) return x } }catch(e){} return null })();
   return {
     r:o.reference||a.order_id,
     f:city(o.pickup_address_id)||o.pickup_site_id||'?',
@@ -75,7 +77,8 @@ function buildCard(a){
         pa:pu.access_status||'',pc:pu.last_confirmed_at||'',ps:pu.last_confirmed_source||'',
         da:de.access_status||'',dc:de.last_confirmed_at||'',ds:de.last_confirmed_source||''
       }
-    })()
+    })(),
+    dec: decForAlert ? { decision:decForAlert.decision, command:decForAlert.command||'', at:decForAlert.at||'' } : null
   };
 }
 
@@ -140,7 +143,8 @@ function renderCard(r){
   if(r.sb){
     return '<div class=c data-aid="'+e(r.aid)+'">'+header+what+chips+
       '<div class=stop><b>Agent stopped</b> '+e(r.sb)+'</div>'+
-      '<div class=a><span class=dslot></span><button onclick="decide(\''+e(r.aid)+'\',\'change\',\''+e(r.cmd||'')+'\')">Change</button>'+caseLink+'</div></div>';
+      '<div class=a><span class=dslot></span><button onclick="decide(\''+e(r.aid)+'\',\'change\',\''+e(r.cmd||'')+'\')">Change</button>'+caseLink+'</div>'+
+      handoverStrip(r)+'</div>';
   }
 
   if(r.g){
@@ -153,7 +157,8 @@ function renderCard(r){
       '<div class=a><span class=dslot></span>'+
       '<button class="act-accept" onclick="decide(\''+e(r.aid)+'\',\'accept\',\''+e(r.cmd||'')+'\')">Accept</button>'+
       '<button class="act-change" onclick="decide(\''+e(r.aid)+'\',\'change\',\''+e(r.cmd||'')+'\')">Change</button>'+
-      caseLink+'</div></div>';
+      caseLink+'</div>'+
+      handoverStrip(r)+'</div>';
   }
 
   return '<div class="c notrun" data-aid="'+e(r.aid)+'">'+header+what+chips+
@@ -163,6 +168,18 @@ function renderCard(r){
     '<button class=runagent onclick="runAgent(\''+e(r.aid)+'\')">Run agent on this case</button>'+
     '<button class="act-change" onclick="decide(\''+e(r.aid)+'\',\'change\',\'\')">Change</button>'+
     caseLink+'</div></div>';
+}
+
+function handoverStrip(r){
+  if(!r.dec) return '';
+  const at = String(r.dec.at||'');
+  const t = at.slice(11,19) || '?';
+  const cmd = r.dec.command || 'alert.resolve';
+  return '<div class="handover">'+
+    '<div class="hstate done">&#10003; '+e(r.dec.decision)+' at '+e(t)+'</div>'+
+    '<div class="hstate">Decision recorded. Agent will execute <code>'+e(cmd)+'</code> on '+e(r.r)+' at the next sweep.</div>'+
+    '<div class="hstate">Case resolved &middot; <a href="/case/'+encodeURIComponent(r.aid)+'">view trace &rarr;</a></div>'+
+    '</div>';
 }
 
 function renderPage(){
@@ -222,7 +239,7 @@ function renderPage(){
     '.hid ul{margin:8px 0 0;padding:0 0 0 18px}.hid li{margin:4px 0;line-height:1.45}'+
     '.hid code{font:12px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}'+
     '.hs{color:#6b7280}.hn{color:#b45309}'+'.qh{margin:10px 0 8px;font-size:12px;color:#4b5563;line-height:1.5}'+'.qtable{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}'+'.qtable th{text-align:left;padding:6px 8px;background:#f4f6f8;color:#374151;font-weight:600;border-bottom:1px solid #e4e7ea}'+'.qtable td{padding:6px 8px;border-bottom:1px solid #eef2f4;vertical-align:top}'+'.qtable td code{font:11px ui-monospace,monospace}'+'.qc{display:inline-block;font-size:10px;padding:1px 6px;border-radius:9px;margin-right:4px;text-transform:lowercase}'+'.qc.ok{background:#dcfce7;color:#14532d}'+'.qc.warn{background:#fef3c7;color:#78350f}'+'.qlist{margin:4px 0 0;padding:0 0 0 18px;font-size:12px;color:#4b5563}'+'.qlist code{font:11px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}'+
-    '.a button:disabled{opacity:.45;cursor:not-allowed}'+
+    '.a button:disabled{opacity:.45;cursor:not-allowed}'+'.handover{margin:11px 0 0;padding:9px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;font-size:12px;color:#166534}'+'.handover .hstate{padding:2px 0}'+'.handover .hstate.done{font-weight:600;color:#15803d}'+'.handover .hstate code{background:#fff;border:1px solid #bbf7d0;border-radius:4px;padding:1px 5px;font:11px ui-monospace,monospace}'+'.handover a{color:#15803d;text-decoration:none}'+
     '</style><script>'+
     'async function decide(id,kind,cmd){'+
     ' try{const r=await fetch("/decide",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({alert_id:id,decision:kind,command:cmd||""})});'+
