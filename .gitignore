@@ -25,3 +25,6 @@ node_modules/
 bahn_ops/traces.jsonl
 
 _scratch/
+bahn_ops/case_history/
+bahn_ops/inbox_in/
+bahn_ops/inbox_out/

@@ -83,6 +83,11 @@ function renderCase(r, env) {
     ? '<div class="refusal"><b>Agent stopped</b><p>' + esc(r.refusal) + '</p></div>'
     : "";
 
+  var phoneBlock = r.phone
+    ? '<a class="phonelink" href="/phone"><b>' + esc(r.phone.count) + '</b> message' +
+      (r.phone.count === 1 ? '' : 's') + ' exchanged with <code>' + esc(r.phone.driver_id) + '</code> &middot; see the log &rarr;</a>'
+    : "";
+
   var traceHtml = renderTrace(r);
   var convHtml = renderConversation(r.history || []);
   var chips = suggestionsFor(r).map(function (s) {
@@ -98,6 +103,9 @@ function renderCase(r, env) {
     '.chip{font:11px ui-monospace,monospace;background:#eef2f4;border-radius:4px;padding:2px 7px;color:#374151}' +
     '.chip.src{background:#dcfce7;color:#14532d}.chip.state{background:#fef3c7;color:#78350f}' +
     '.refusal{background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #b91c1c;border-radius:8px;padding:12px 14px;margin:0 0 16px}' +
+    '.phonelink{display:block;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:9px 12px;margin:0 0 14px;font-size:13px;color:#5b21b6;text-decoration:none}' +
+    '.phonelink code{background:#fff;border:1px solid #ddd6fe;border-radius:4px;padding:1px 5px;font:11px ui-monospace,monospace}' +
+    '.phonelink:hover{background:#ede9fe}' +
     '.turn{border:1px solid #e4e7ea;background:#fff;border-radius:8px;padding:12px 14px;margin-bottom:10px}' +
     '.turn.tool code{font:12px ui-monospace,monospace;color:#15803d;font-weight:600}' +
     '.turn.tool .args{font:12px ui-monospace,monospace;color:#6b7280;margin-left:8px}' +
@@ -130,10 +138,12 @@ function renderCase(r, env) {
     '<span class="chip state">' + esc(r.fact_state || "?") + '</span>' +
     '<span class="chip">' + esc((r.driver_replies || []).length) + ' driver replies</span></div>' +
     refusalBlock +
+    phoneBlock +
     '<h2 class="sec">What the agent did</h2>' +
     (traceHtml || '<p class="empty">No turns yet.</p>') +
     '<h2 class="sec">Talk to the agent</h2>' +
     convHtml +
+    '<p style="margin:8px 0 0;font-size:13px"><a href="/phone" style="color:#6b7280;text-decoration:none">See every message the agent has sent this driver &rarr;</a></p>' +
     '<div class="suggrow" style="margin:8px 0">' + chips + '</div>' +
     '<div class="say">' +
     '<input id="sayin" placeholder="What should the agent do next?" autocomplete="off">' +
