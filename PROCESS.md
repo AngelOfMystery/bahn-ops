@@ -108,3 +108,22 @@ direction.
 Then read the operations context as carefully as the schema. It is where the
 distinctions live — quoted versus booked, reported versus confirmed, present
 versus authorised to collect. Those distinctions are the product.
+
+**The model echoed the schema.** One of the first twelve model proposals came
+back with `summary: "one sentence, what happened"` and
+`command: "dotted.command.name"` — the literal placeholders from our prompt.
+It parsed as valid JSON, so nothing caught it until a sample row was read by
+eye. Fixed with a placeholder guard: if any marker from the prompt appears in
+the result, the deterministic proposal is written instead and `model_error`
+records `model echoed schema placeholder`. Valid JSON is not the same as a
+valid answer.
+
+**The model proposed on cases it should refuse.** Before the stop guard moved,
+all twelve alerts went to the model, including three whose evidence could not
+support any action. It invented `ops.release.authority.review` and
+`ops-readiness.confirm-desk-access` for them — plausible-sounding commands for
+situations where the right answer was to stop. Fixed by computing the refusal
+before the model call: if the evidence does not support action, the
+deterministic refusal is written and the model is never asked. Cheaper, and
+the answers are better. `SOURCES: {deterministic: 3, model: 9}` is the shape
+that fix produced, and it is a better shape than twelve model calls.
