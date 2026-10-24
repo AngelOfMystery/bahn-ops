@@ -4,8 +4,10 @@ const { renderPhone } = require('./phone.js');
 const h=require('http'),f=require('fs'),p=require('path'),cp=require('child_process');
 const DEC=p.join(__dirname,'..','bahn_ops','decisions.jsonl');
 const OURS=p.join(__dirname,'..','bahn_ops','ours.jsonl');
+const EXE=p.join(__dirname,'..','bahn_ops','executions.jsonl');
 
 const LD=()=>{try{if(!f.existsSync(DEC))return[];return f.readFileSync(DEC,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean)}catch(e){return[]}};
+const LE=()=>{try{if(!f.existsSync(EXE))return[];return f.readFileSync(EXE,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean)}catch(e){return[]}};
 const L=n=>{const x=p.join(__dirname,'dataset','data',n+'.jsonl');
  if(!f.existsSync(x))return[];return f.readFileSync(x,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean)};
 
@@ -78,7 +80,11 @@ function buildCard(a){
         da:de.access_status||'',dc:de.last_confirmed_at||'',ds:de.last_confirmed_source||''
       }
     })(),
-    dec: decForAlert ? { decision:decForAlert.decision, command:decForAlert.command||'', at:decForAlert.at||'' } : null
+    dec: decForAlert ? { decision:decForAlert.decision, command:decForAlert.command||'', at:decForAlert.at||'' } : null,
+    exec: (()=>{
+      try{ for(const x of LE()){ if(x.alert_id===a.id) return x } }catch(e){}
+      return null;
+    })()
   };
 }
 
@@ -176,10 +182,32 @@ function handoverStrip(r){
   const at = String(r.dec.at||'');
   const t = at.slice(11,19) || '?';
   const cmd = r.dec.command || 'alert.resolve';
-  return '<div class="handover">'+
-    '<div class="hstate done">&#10003; '+e(r.dec.decision)+' at '+e(t)+'</div>'+
-    '<div class="hstate">Decision recorded. Agent will execute <code>'+e(cmd)+'</code> on '+e(r.r)+' at the next sweep.</div>'+
-    '<div class="hstate">Case resolved &middot; <a href="/case/'+encodeURIComponent(r.aid)+'">view trace &rarr;</a></div>'+
+  const decLine = '<div class="hstate done">&#10003; '+e(r.dec.decision)+' at '+e(t)+'</div>';
+
+  if(r.exec){
+    const exAt = String(r.exec.executed_at||'');
+    const exT = exAt.slice(11,19) || '?';
+    const status = r.exec.status || 'SUCCESS';
+    const desc = r.exec.description || '';
+    if(status === 'REFUSED'){
+      return '<div class="handover refused">'+
+        decLine+
+        '<div class="hstate refused">&#10007; REFUSED &middot; '+e(desc)+'</div>'+
+        '<div class="hstate">Command <code>'+e(cmd)+'</code> was not executed on '+e(r.r)+'</div>'+
+        '<div class="hstate"><a href="/case/'+encodeURIComponent(r.aid)+'">view trace &rarr;</a></div>'+
+        '</div>';
+    }
+    return '<div class="handover">'+
+      decLine+
+      '<div class="hstate">Executed at '+e(exT)+': '+e(desc)+'</div>'+
+      '<div class="hstate">Case resolved &middot; <a href="/case/'+encodeURIComponent(r.aid)+'">view trace &rarr;</a></div>'+
+      '</div>';
+  }
+
+  return '<div class="handover pending">'+
+    decLine+
+    '<div class="hstate">Executing <code>'+e(cmd)+'</code> on '+e(r.r)+'...</div>'+
+    '<div class="hstate"><a href="/case/'+encodeURIComponent(r.aid)+'">view trace &rarr;</a></div>'+
     '</div>';
 }
 
@@ -240,7 +268,7 @@ function renderPage(){
     '.hid ul{margin:8px 0 0;padding:0 0 0 18px}.hid li{margin:4px 0;line-height:1.45}'+
     '.hid code{font:12px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}'+
     '.hs{color:#6b7280}.hn{color:#b45309}'+'.qh{margin:10px 0 8px;font-size:12px;color:#4b5563;line-height:1.5}'+'.qtable{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}'+'.qtable th{text-align:left;padding:6px 8px;background:#f4f6f8;color:#374151;font-weight:600;border-bottom:1px solid #e4e7ea}'+'.qtable td{padding:6px 8px;border-bottom:1px solid #eef2f4;vertical-align:top}'+'.qtable td code{font:11px ui-monospace,monospace}'+'.qc{display:inline-block;font-size:10px;padding:1px 6px;border-radius:9px;margin-right:4px;text-transform:lowercase}'+'.qc.ok{background:#dcfce7;color:#14532d}'+'.qc.warn{background:#fef3c7;color:#78350f}'+'.qlist{margin:4px 0 0;padding:0 0 0 18px;font-size:12px;color:#4b5563}'+'.qlist code{font:11px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}'+
-    '.a button:disabled{opacity:.45;cursor:not-allowed}'+'.handover{margin:11px 0 0;padding:9px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;font-size:12px;color:#166534}'+'.handover .hstate{padding:2px 0}'+'.handover .hstate.done{font-weight:600;color:#15803d}'+'.handover .hstate code{background:#fff;border:1px solid #bbf7d0;border-radius:4px;padding:1px 5px;font:11px ui-monospace,monospace}'+'.handover a{color:#15803d;text-decoration:none}'+
+    '.a button:disabled{opacity:.45;cursor:not-allowed}'+'.handover{margin:11px 0 0;padding:9px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;font-size:12px;color:#166534}'+'.handover .hstate{padding:2px 0}'+'.handover .hstate.done{font-weight:600;color:#15803d}'+'.handover .hstate code{background:#fff;border:1px solid #bbf7d0;border-radius:4px;padding:1px 5px;font:11px ui-monospace,monospace}'+'.handover a{color:#15803d;text-decoration:none}'+'.handover.refused{background:#fef2f2;border-color:#fecaca}'+'.handover.refused .hstate.done{color:#991b1b}'+'.handover .hstate.refused{color:#b91c1c;font-weight:600}'+'.handover.refused a{color:#b91c1c}'+'.handover.pending{background:#fef3c7;border-color:#fde68a;color:#78350f}'+'.handover.pending .hstate.done{color:#92400e}'+'.handover.pending a{color:#92400e}'+
     '</style><script>'+
     'async function decide(id,kind,cmd){'+
     ' try{const r=await fetch("/decide",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({alert_id:id,decision:kind,command:cmd||""})});'+
@@ -378,6 +406,15 @@ h.createServer((q,s)=>{
       if(!d.alert_id||!d.decision){s.writeHead(400,{'content-type':'application/json'});return s.end(JSON.stringify({ok:false,error:'alert_id and decision required'}))}
       const row={alert_id:d.alert_id,decision:d.decision,command:d.command||'',at:new Date().toISOString()};
       f.appendFileSync(DEC,JSON.stringify(row)+'\n','utf8');
+      // Fire the executor in the background; do not wait
+      try{
+        const child=cp.spawn('python3',['-m','bahn_ops.execute',d.alert_id],{
+          cwd:p.join(__dirname,'..'),
+          detached:true,
+          stdio:'ignore'
+        });
+        child.unref();
+      }catch(e){}
       s.writeHead(200,{'content-type':'application/json'});
       return s.end(JSON.stringify({ok:true,row}));
     });
@@ -417,6 +454,20 @@ h.createServer((q,s)=>{
         return s.end(JSON.stringify({ok:false,error:String(e.message||e).slice(0,300)}));
       }
     });
+  }
+
+  if(q.url==='/executions'){
+    s.writeHead(200,{'content-type':'application/json'});
+    return s.end(JSON.stringify(LE()));
+  }
+
+  if(q.url.match(/^\/executions\/[^\/]+/)){
+    const m = q.url.match(/^\/executions\/([^\/]+)/);
+    const id = decodeURIComponent(m[1]).replace(/[^A-Za-z0-9_\-]/g,'');
+    let latest=null;
+    try{ for(const x of LE()){ if(x.alert_id===id) latest=x } }catch(e){}
+    s.writeHead(latest?200:404,{'content-type':'application/json'});
+    return s.end(JSON.stringify(latest||{ok:false,error:'no execution'}));
   }
 
   s.writeHead(200,{'content-type':'text/html;charset=utf-8'});
