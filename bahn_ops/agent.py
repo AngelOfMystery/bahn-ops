@@ -257,38 +257,41 @@ def call_model(prompt):
             "model": name,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.2,
-            "max_tokens": 600,
+            "max_tokens": 6000,
         }
     ).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + key,
-        },
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + key},
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=120) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         return None, "http " + str(e.code) + " " + e.read().decode("utf-8", "replace")[:300]
     except Exception as e:
         return None, "call failed " + str(e)[:300]
     try:
-        text = payload["choices"][0]["message"]["content"]
+        choice = (payload.get("choices") or [{}])[0]
+        msg = choice.get("message") or {}
+        text = msg.get("content")
+        if not text:
+            text = msg.get("reasoning_content") or msg.get("reasoning") or ""
+        finish = choice.get("finish_reason") or "unknown"
     except Exception:
         return None, "unexpected response shape"
+    if not text:
+        return None, "empty content, finish=" + str(finish)
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or end <= start:
-        return None, "no json in reply"
+        return None, "no json in reply, finish=" + str(finish) + " head=" + text[:80].replace("\n", " ")
     try:
         return json.loads(text[start : end + 1]), None
     except json.JSONDecodeError as e:
-        return None, "bad json " + str(e)[:200]
-
+        return None, "bad json " + str(e)[:120]
 
 def deterministic(alert, order, refs):
     sev = str(alert.get("severity", "")).upper()
@@ -313,8 +316,25 @@ def deterministic(alert, order, refs):
         "source_class": source_class(alert),
         "fact_state": fact_state(alert),
         "stops_because": stops_because(alert, order, refs),
+        "stop_enforced": bool(stops_because(alert, order, refs)),
         "source": "deterministic",
     }
+
+
+PLACEHOLDER_MARKERS = (
+    "dotted.command",
+    "one sentence, what happened",
+    "why this action",
+    "one or two sentences",
+)
+
+
+def is_placeholder(result):
+    blob = json.dumps(result, ensure_ascii=False).lower()
+    for m in PLACEHOLDER_MARKERS:
+        if m in blob:
+            return m
+    return None
 
 
 def main():
@@ -359,10 +379,15 @@ def main():
             result["model_error"] = err
             failed += 1
         else:
-            result.setdefault("evidence_refs", refs)
-            result.setdefault("command", FALLBACK_COMMAND)
-            result.setdefault("needs_approval", True)
-            result["source"] = "model"
+            echo = is_placeholder(result)
+            if echo:
+                result = deterministic(alert, order, refs)
+                result["model_error"] = "model echoed schema placeholder: " + echo
+            else:
+                result.setdefault("evidence_refs", refs)
+                result.setdefault("command", FALLBACK_COMMAND)
+                result.setdefault("needs_approval", True)
+                result["source"] = "model"
         result["alert_id"] = alert.get("id")
         result["order_id"] = order_id
         result["generated_at"] = datetime.now(timezone.utc).isoformat()
