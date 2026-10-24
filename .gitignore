@@ -19,3 +19,4 @@ response.json
 bahn_ops/ours.jsonl
 *.bak*
 repo.txt
+bahn_ops/decisions.jsonl
