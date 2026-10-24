@@ -10,7 +10,6 @@ const L=n=>{const x=p.join(__dirname,'dataset','data',n+'.jsonl');
 
 const O=L('orders'),A=L('alerts'),D=L('addresses'),WI=L('work_items'),EP=L('order_endpoint_details');
 
-// Normalize evidence_refs from either {id, table} objects or plain strings to a list of ids
 const refId = x => (x && typeof x === 'object') ? (x.id || x.ref || '') : String(x || '');
 const refIds = arr => (arr || []).map(refId).filter(Boolean);
 
@@ -46,6 +45,7 @@ const S={critical:0,high:1,medium:2,low:3};
 function buildCard(a){
   const o=OM[a.order_id]||{};
   const q=PA[a.id]||PO[a.order_id]||{};
+  const hasProposal=!!(q.summary || q.stops_because);
   return {
     r:o.reference||a.order_id,
     f:city(o.pickup_address_id)||o.pickup_site_id||'?',
@@ -64,7 +64,7 @@ function buildCard(a){
     aid:a.id||'',
     cmd:q.command||'',
     me:q.model_error||'',
-    hasProposal:!!(q.summary || q.stops_because),
+    hasProposal:hasProposal,
     wi:(()=>{const w=WI.find(x=>x.order_id===o.id);return w?{due:w.due_at||'',kind:w.kind||'',owner:w.owner||'',next:w.next_action||''}:null})(),
     ep:(()=>{
       const z=EP.filter(x=>x.order_id===o.id);
@@ -90,7 +90,6 @@ const HID=A.filter(a=>a.status!=='OPEN').map(a=>({
   sig:a.signal||''
 }));
 
-// Summary of quiet orders: what was checked per the shipped dataset
 function buildQuiet(){
   const alerted={};
   for(const a of A)if(a.status==='OPEN')alerted[a.order_id]=true;
@@ -121,14 +120,12 @@ function renderCard(r){
   const header='<div class=h><b>'+e(r.r)+'</b><span>'+e(r.f)+' &rarr; '+e(r.t)+'</span><small>'+e(r.s)+'</small></div>';
   const what='<p class=w>'+e(r.y)+'</p>';
 
-  // STOPPED case (refusal before action)
   if(r.sb){
     return '<div class=c data-aid="'+e(r.aid)+'">'+header+what+chips+
       '<div class=stop><b>Agent stopped</b> '+e(r.sb)+'</div>'+
       '<div class=a><span class=dslot></span><button onclick="decide(\''+e(r.aid)+'\',\'change\',\''+e(r.cmd||'')+'\')">Change</button>'+caseLink+'</div></div>';
   }
 
-  // PROPOSAL case (agent has a suggestion, needs approval)
   if(r.g){
     const effect='<div class=effect><b>Accepting will</b> run <code>'+e(r.cmd||'alert.resolve')+'</code> on '+e(r.r)+' &middot; no customer contact &middot; needs your approval</div>';
     return '<div class=c data-aid="'+e(r.aid)+'">'+header+what+chips+
@@ -142,7 +139,6 @@ function renderCard(r){
       caseLink+'</div></div>';
   }
 
-  // NOT-YET-RUN case (no shipped proposal attached)
   return '<div class="c notrun" data-aid="'+e(r.aid)+'">'+header+what+chips+
     '<div class=notrunbox><b>The agent has not looked at this case yet.</b> '+
     'Click below to run it on just this alert.</div>'+
@@ -204,14 +200,13 @@ function renderPage(){
     '.hid ul{margin:8px 0 0;padding:0 0 0 18px}.hid li{margin:4px 0;line-height:1.45}'+
     '.hid code{font:12px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}'+
     '.hs{color:#6b7280}.hn{color:#b45309}'+
-    '.done{color:#15803d;font-size:13px;font-weight:600}'+
     '.a button:disabled{opacity:.45;cursor:not-allowed}'+
     '</style><script>'+
     'async function decide(id,kind,cmd){'+
     ' try{const r=await fetch("/decide",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({alert_id:id,decision:kind,command:cmd||""})});'+
     ' const j=await r.json();if(j.ok){loadDecisions()}else{alert("could not record: "+(j.error||"unknown"))}}catch(e){alert("could not record: "+e.message)}}'+
     'async function runAgent(id){'+
-    ' const btn=event.target;btn.disabled=true;btn.textContent="Running agent…";'+
+    ' const btn=event.target;btn.disabled=true;btn.textContent="Running agent...";'+
     ' try{const r=await fetch("/run-case/"+encodeURIComponent(id),{method:"POST"});const j=await r.json();'+
     ' if(j.ok){location.reload()}else{btn.disabled=false;btn.textContent="Run agent on this case";alert("agent failed: "+(j.error||"unknown"))}}'+
     ' catch(e){btn.disabled=false;btn.textContent="Run agent on this case";alert("agent failed: "+e.message)}}'+
@@ -226,7 +221,6 @@ function renderPage(){
     (cards||'<p>Nothing waiting.</p>');
 }
 
-// POST /run-case/:alert_id -> spawn case_chat.run_case(id), append to ours.jsonl
 function runCaseFor(alertId, res){
   try{
     const py = "import sys,json;sys.path.insert(0,'.');from bahn_ops.case_chat import run_case;print(json.dumps(run_case('"+alertId.replace(/[^A-Za-z0-9_\-]/g,'')+"')))";
@@ -242,7 +236,7 @@ function runCaseFor(alertId, res){
       order_id: record.order_id,
       summary: prop.summary || '',
       rationale: prop.rationale || '',
-      command: record.refusal ? 'alert.resolve' : 'alert.resolve',
+      command: 'alert.resolve',
       evidence_refs: record.turns ? record.turns.map(t=>t.result||'').filter(Boolean).slice(0,6) : [],
       needs_approval: true,
       source_class: record.source_class || '',
@@ -262,15 +256,54 @@ function runCaseFor(alertId, res){
   }
 }
 
+function sayToCase(alertId, message, res){
+  try{
+    const payload = JSON.stringify({alert_id: alertId, message: message});
+    const py = "import sys,json;msg=json.loads(sys.stdin.read());sys.path.insert(0,'.');from bahn_ops.case_chat import continue_case;print(json.dumps(continue_case(msg['alert_id'], msg['message'])))";
+    const out = cp.execFileSync('python3',['-c',py],{cwd:p.join(__dirname,'..'),input:payload,timeout:120000,encoding:'utf8'});
+    const record = JSON.parse(out);
+    res.writeHead(record.ok?200:500,{'content-type':'application/json'});
+    return res.end(JSON.stringify(record));
+  }catch(err){
+    res.writeHead(500,{'content-type':'application/json'});
+    return res.end(JSON.stringify({ok:false,error:String(err.message||err).slice(0,300)}));
+  }
+}
+
+function readJsonBody(q, cb){
+  let b='';
+  q.on('data',c=>{b+=c});
+  q.on('end',()=>{
+    try{ cb(null, JSON.parse(b||'{}')) }catch(e){ cb(e) }
+  });
+}
+
 h.createServer((q,s)=>{
-  // GET /case/:alert_id
+  // POST /case/:id/say
+  if(q.method==='POST' && q.url.match(/^\/case\/[^\/]+\/say/)){
+    const m = q.url.match(/^\/case\/([^\/]+)\/say/);
+    const id = decodeURIComponent(m[1]).replace(/[^A-Za-z0-9_\-]/g,'');
+    return readJsonBody(q, (err, body)=>{
+      if(err){s.writeHead(400,{'content-type':'application/json'});return s.end(JSON.stringify({ok:false,error:'bad json'}))}
+      const message = (body && body.message) || '';
+      if(!message.trim()){s.writeHead(400,{'content-type':'application/json'});return s.end(JSON.stringify({ok:false,error:'message required'}))}
+      return sayToCase(id, message, s);
+    });
+  }
+
+  // GET /case/:id -- metadata from dataset, history from disk (no re-run)
   if(q.url.startsWith('/case/')){
     const id=decodeURIComponent(q.url.slice(6).split('?')[0]).replace(/[^A-Za-z0-9_\-]/g,'');
     let r={ok:false,alert_id:id,error:'case engine not invoked'};
     try{
       const out=cp.execFileSync('python3',['-c',
-        "import sys,json;sys.path.insert(0,'.');from bahn_ops.case_chat import run_case;print(json.dumps(run_case('"+id+"')))"],
-        {cwd:p.join(__dirname,'..'),timeout:120000,encoding:'utf8'});
+        "import sys,json;sys.path.insert(0,'.');from bahn_ops.case_chat import _build_ctx,load_history,save_history;from bahn_ops.agent import source_class,fact_state;ctx,err=_build_ctx('"+id+"');" +
+        "r={'ok':True,'alert_id':'" + id + "','order_id':(ctx.get('alert') or {}).get('order_id'),'reference':(ctx.get('order') or {}).get('reference'),'source_class':source_class(ctx['alert']),'fact_state':fact_state(ctx['alert']),'refusal':ctx.get('refusal'),'turns':[],'proposal':None,'history':load_history('" + id + "'),'mode':None,'driver_replies':[]};" +
+        "h=r['history'];r['turns']=[x.get('turn') for x in h if x.get('role')=='agent' and x.get('turn')];" +
+        "r['proposal']=r['turns'][-1] if r['turns'] else None;" +
+        "r['mode']='conversation' if h else 'new';" +
+        "print(json.dumps(r))"],
+        {cwd:p.join(__dirname,'..'),timeout:30000,encoding:'utf8'});
       r=JSON.parse(out);
     }catch(e){ r={ok:false,alert_id:id,error:String(e.message||e).slice(0,240)}; }
     const env={base:process.env.BAHN_MODEL_BASE_URL||'',model:process.env.BAHN_MODEL_NAME||'',keyPresent:!!process.env.BAHN_MODEL_API_KEY};
@@ -278,7 +311,6 @@ h.createServer((q,s)=>{
     return s.end(renderCase(r,env));
   }
 
-  // POST /run-case/:alert_id
   if(q.method==='POST' && q.url.startsWith('/run-case/')){
     const id=decodeURIComponent(q.url.slice(10).split('?')[0]).replace(/[^A-Za-z0-9_\-]/g,'');
     return runCaseFor(id, s);
@@ -311,7 +343,4 @@ h.createServer((q,s)=>{
   const Q=buildQueue();
   console.log('UP');
   console.log('open',Q.length,'proposed',Q.filter(r=>r.g).length,'stopped',Q.filter(r=>r.sb).length,'notrun',Q.filter(r=>!r.g&&!r.sb).length);
-  console.log('commands',[...new Set(P.map(x=>x.command).filter(Boolean))].slice(0,8).join('|'));
-  const w=Q.find(r=>r.g);
-  console.log('sample',w?w.r+' :: '+w.g.slice(0,70):'none');
 });

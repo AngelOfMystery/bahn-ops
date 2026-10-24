@@ -6,16 +6,8 @@ function esc(v) {
   });
 }
 
-function renderCase(r, env) {
-  var provider = (env && env.base) || "(default)";
-  var model = (env && env.model) || "(default)";
-  var modeLabel = env && env.keyPresent ? "model" : "deterministic";
-
-  var refusalBlock = r.refusal
-    ? '<div class="refusal"><b>Agent stopped</b><p>' + esc(r.refusal) + '</p></div>'
-    : "";
-
-  var turnsHtml = (r.turns || []).map(function (t) {
+function renderTrace(r) {
+  return (r.turns || []).map(function (t) {
     if (t.tool) {
       return '<div class="turn tool"><code>' + esc(t.tool) + '</code>' +
         (t.args && Object.keys(t.args).length ? '<span class="args">' + esc(JSON.stringify(t.args)) + '</span>' : "") +
@@ -25,18 +17,81 @@ function renderCase(r, env) {
       return '<div class="turn assistant">' + esc(t.assistant) + '</div>';
     }
     if (t.kind) {
-      return '<div class="turn proposal"><b>' + esc(t.kind) + '</b><p>' + esc(t.summary) + '</p><p class="why">' + esc(t.rationale) + '</p></div>';
+      return '<div class="turn proposal"><b>' + esc(t.kind) + '</b><p>' + esc(t.summary) + '</p>' +
+        '<p class="why">' + esc(t.rationale) + '</p></div>';
     }
     return "";
   }).join("");
+}
 
-  var driverHtml = (r.driver_replies || []).map(function (d) {
-    return '<div class="turn driver"><div class="q">' + esc(d.q) + '</div><div class="a">' + esc(d.a) + '</div></div>';
+function renderConversation(history) {
+  if (!history || !history.length) {
+    return '<p class="empty">No conversation yet. Ask the agent something below.</p>';
+  }
+  return history.map(function (h) {
+    if (h.role === "operator") {
+      return '<div class="msg op"><div class="who">You</div><div class="body">' + esc(h.content) + '</div>' +
+        '<div class="when">' + esc((h.at || "").slice(11, 16)) + '</div></div>';
+    }
+    var t = h.turn || {};
+    if (t.tool && t.tool !== "propose_action") {
+      return '<div class="msg ag tool"><div class="who">Agent · tool</div><div class="body"><code>' + esc(t.tool) + '</code>' +
+        (t.args && t.args.question ? '<span class="q"> &mdash; ' + esc(t.args.question) + '</span>' : '') +
+        '<div class="res">' + esc(t.result) + '</div></div></div>';
+    }
+    if (t.tool === "propose_action") {
+      return '<div class="msg ag propose"><div class="who">Agent · proposal</div><div class="body">' +
+        '<b>' + esc((t.args && t.args.summary) || "") + '</b>' +
+        '<p>' + esc((t.args && t.args.rationale) || "") + '</p></div></div>';
+    }
+    if (t.assistant) {
+      return '<div class="msg ag"><div class="who">Agent</div><div class="body">' + esc(t.assistant) + '</div></div>';
+    }
+    if (t.kind) {
+      return '<div class="msg ag ' + esc(t.kind) + '"><div class="who">Agent · ' + esc(t.kind) + '</div><div class="body">' +
+        '<b>' + esc(t.summary || "") + '</b><p>' + esc(t.rationale || "") + '</p></div></div>';
+    }
+    return "";
+  }).join("");
+}
+
+function suggestionsFor(r) {
+  if (r.refusal) {
+    return [
+      "What evidence would unblock this case?",
+      "Ask the driver where exactly they are"
+    ];
+  }
+  if (r.proposal && r.proposal.kind === "propose") {
+    return [
+      "Ask the driver one more question before I accept",
+      "What's the risk if I accept this now?"
+    ];
+  }
+  return [
+    "What's the situation here?",
+    "Ask the driver if they're safe"
+  ];
+}
+
+function renderCase(r, env) {
+  var provider = (env && env.base) || "(default)";
+  var model = (env && env.model) || "(default)";
+  var modeLabel = r.mode || "deterministic";
+
+  var refusalBlock = r.refusal
+    ? '<div class="refusal"><b>Agent stopped</b><p>' + esc(r.refusal) + '</p></div>'
+    : "";
+
+  var traceHtml = renderTrace(r);
+  var convHtml = renderConversation(r.history || []);
+  var chips = suggestionsFor(r).map(function (s) {
+    return '<button class="sugg" onclick="say(this.dataset.q)" data-q="' + esc(s) + '">' + esc(s) + '</button>';
   }).join("");
 
   return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Case ' + esc(r.reference || r.alert_id) + '</title>' +
     '<style>' +
-    'body{font:15px/1.55 system-ui;background:#f7f8f9;margin:0;padding:28px;color:#1a1d21}' +
+    'body{font:15px/1.55 system-ui;background:#f7f8f9;margin:0;padding:28px;color:#1a1d21;max-width:840px}' +
     'a{color:#15803d}h1{font-size:20px;margin:0 0 4px}' +
     '.meta{color:#6b7280;font-size:13px;margin:0 0 20px}' +
     '.chips{display:flex;gap:6px;margin:0 0 18px;flex-wrap:wrap}' +
@@ -47,23 +102,60 @@ function renderCase(r, env) {
     '.turn.tool code{font:12px ui-monospace,monospace;color:#15803d;font-weight:600}' +
     '.turn.tool .args{font:12px ui-monospace,monospace;color:#6b7280;margin-left:8px}' +
     '.turn pre{margin:8px 0 0;white-space:pre-wrap;font:12px ui-monospace,monospace;color:#374151;max-height:180px;overflow:auto}' +
-    '.turn.driver{background:#eff6ff;border-color:#bfdbfe}.turn.driver .q{font-size:12px;color:#1e40af;margin-bottom:4px}' +
     '.turn.proposal{border-color:#bbf7d0;background:#f0fdf4}.turn.proposal .why{color:#166534;font-size:13px;margin:6px 0 0}' +
     '.turn.assistant{background:#f9fafb}' +
+    '.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;margin:26px 0 10px;font-weight:600}' +
+    '.msg{border-radius:9px;padding:10px 14px;margin-bottom:8px;font-size:14px}' +
+    '.msg .who{font-size:11px;text-transform:uppercase;letter-spacing:.05em;opacity:.8;margin-bottom:3px}' +
+    '.msg .body p{margin:4px 0 0}.msg .when{font-size:11px;opacity:.55;margin-top:4px}' +
+    '.msg.op{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a}' +
+    '.msg.ag{background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d}' +
+    '.msg.ag.tool{background:#f8fafc;border-color:#e2e8f0;color:#334155}' +
+    '.msg.ag.tool .res{font:11px ui-monospace,monospace;margin-top:4px;max-height:120px;overflow:auto;white-space:pre-wrap;opacity:.85}' +
+    '.msg.ag.refuse{background:#fff7ed;border-color:#fed7aa;color:#7c2d12}' +
+    '.say{display:flex;gap:8px;margin-top:12px}' +
+    '.say input{flex:1;font:inherit;padding:9px 12px;border:1px solid #d5d9dd;border-radius:8px;background:#fff}' +
+    '.say button{font:inherit;font-size:14px;padding:9px 18px;border-radius:8px;border:1px solid #15803d;background:#15803d;color:#fff;cursor:pointer}' +
+    '.say button:disabled{opacity:.5;cursor:not-allowed}' +
+    '.sugg{font:12px;padding:4px 10px;border-radius:12px;border:1px solid #d5d9dd;background:#fff;cursor:pointer;color:#374151;margin-right:6px}' +
+    '.sugg:hover{background:#f4f6f8}' +
     '.empty{color:#6b7280;font-size:13px}' +
     '.env{margin-top:22px;color:#6b7280;font-size:12px;font-family:ui-monospace,monospace}' +
     '.back{display:inline-block;margin-bottom:18px;font-size:13px;text-decoration:none}' +
     '</style></head><body>' +
     '<a class="back" href="/">&larr; back to queue</a>' +
     '<h1>' + esc(r.reference || r.alert_id) + '</h1>' +
-    '<p class="meta">alert ' + esc(r.alert_id) + ' &middot; mode ' + esc(r.mode || "deterministic") + ' &middot; ' + (r.tools || []).length + ' tools</p>' +
+    '<p class="meta">alert ' + esc(r.alert_id) + ' &middot; mode ' + esc(modeLabel) + ' &middot; ' + (r.tools || []).length + ' tools</p>' +
     '<div class="chips"><span class="chip src">' + esc(r.source_class || "?") + '</span>' +
     '<span class="chip state">' + esc(r.fact_state || "?") + '</span>' +
     '<span class="chip">' + esc((r.driver_replies || []).length) + ' driver replies</span></div>' +
     refusalBlock +
-    (turnsHtml || '<p class="empty">No turns yet. This case did not reach the model.</p>') +
-    (driverHtml ? '<h2 style="font-size:15px;margin:20px 0 8px">Driver answers</h2>' + driverHtml : "") +
-    '<p class="env">provider ' + esc(provider) + ' &middot; model ' + esc(model) + ' &middot; running ' + esc(modeLabel) + ' (change in .env)</p>' +
+    '<h2 class="sec">What the agent did</h2>' +
+    (traceHtml || '<p class="empty">No turns yet.</p>') +
+    '<h2 class="sec">Talk to the agent</h2>' +
+    convHtml +
+    '<div class="suggrow" style="margin:8px 0">' + chips + '</div>' +
+    '<div class="say">' +
+    '<input id="sayin" placeholder="What should the agent do next?" autocomplete="off">' +
+    '<button id="saybtn" onclick="say()">Send</button>' +
+    '</div>' +
+    '<p class="env">provider ' + esc(provider) + ' &middot; model ' + esc(model) + ' &middot; running ' + esc(modeLabel) + '</p>' +
+    '<script>' +
+    'var ALERT_ID=' + JSON.stringify(r.alert_id) + ';' +
+    'async function say(q){' +
+    '  var inp=document.getElementById("sayin");' +
+    '  var msg=q!==undefined?q:(inp.value||"");' +
+    '  if(!msg.trim())return;' +
+    '  var btn=document.getElementById("saybtn");' +
+    '  btn.disabled=true;btn.textContent="Sending...";' +
+    '  try{' +
+    '    var res=await fetch("/case/"+encodeURIComponent(ALERT_ID)+"/say",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({message:msg})});' +
+    '    var j=await res.json();' +
+    '    if(j.ok){location.reload()}else{alert("agent failed: "+(j.error||"unknown"));btn.disabled=false;btn.textContent="Send"}' +
+    '  }catch(e){alert("agent failed: "+e.message);btn.disabled=false;btn.textContent="Send"}' +
+    '}' +
+    'document.addEventListener("keydown",function(e){if(e.key==="Enter"&&e.target.id==="sayin")say()});' +
+    '</script>' +
     '</body></html>';
 }
 
