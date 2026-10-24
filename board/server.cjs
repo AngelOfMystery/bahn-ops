@@ -11,7 +11,7 @@ const S={critical:0,high:1,medium:2,low:3};
 const Q=A.filter(a=>a.status==='OPEN').map(a=>{const o=OM[a.order_id]||{},q=PA[a.id]||PO[a.order_id]||{};
  return{r:o.reference||a.order_id,f:city(o.pickup_address_id)||o.pickup_site_id||'?',
  t:city(o.delivery_address_id)||o.delivery_site_id||'?',s:a.severity||'',y:a.summary||'',w:a.triggered_at||'',
- g:q.summary||'',ra:q.rationale||'',ev:(a.evidence_refs||[])[0]||''}})
+ g:q.summary||'',ra:q.rationale||'',ev:(a.evidence_refs||[])[0]||'',oev:(q.evidence_refs||[]).length}})
  .sort((x,y)=>((S[x.s]??9)-(S[y.s]??9))||x.w.localeCompare(y.w));
 const e=v=>String(v==null?'':v).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 const b=Q.map(r=>`<div class=c><div class=h><b>${e(r.r)}</b><span>${e(r.f)} &rarr; ${e(r.t)}</span><small>${e(r.s)}</small></div>
@@ -30,7 +30,7 @@ body{font:15px/1.55 system-ui;background:#f7f8f9;margin:0;padding:28px;color:#1a
 button:first-child{background:#15803d;border-color:#15803d;color:#fff}.done{color:#15803d;font-size:13px;font-weight:600}
 </style><h1>Needs a person</h1><p class=m>${Q.length} open of ${A.length} alerts &middot; ${Q.filter(r=>r.g).length} with a proposal</p>${b||'<p>Nothing waiting.</p>'}`;
 h.createServer((q,s)=>{s.writeHead(200,{'content-type':'text/html;charset=utf-8'});s.end(H)})
- .listen(4317,'127.0.0.1',()=>{console.log('UP');console.log('open',Q.length,'proposed',Q.filter(r=>r.g).length,'rationale',Q.filter(r=>r.ra).length,'evidence',Q.filter(r=>r.ev).length);
+ .listen(4317,'127.0.0.1',()=>{console.log('UP');console.log('open',Q.length,'proposed',Q.filter(r=>r.g).length,'rationale',Q.filter(r=>r.ra).length,'alert_level_evidence',Q.filter(r=>r.ev).length,'proposal_evidence',Q.filter(r=>r.oev).length);
  console.log('statuses',[...new Set(P.map(x=>x.status).filter(Boolean))].join('|'));
  console.log('reviews',[...new Set(P.map(x=>x.review).filter(Boolean))].join('|'));
  console.log('commands',[...new Set(P.map(x=>x.command).filter(Boolean))].slice(0,8).join('|'));
