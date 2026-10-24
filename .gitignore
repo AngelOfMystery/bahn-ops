@@ -28,3 +28,4 @@ _scratch/
 bahn_ops/case_history/
 bahn_ops/inbox_in/
 bahn_ops/inbox_out/
+bahn_ops/executions.jsonl
