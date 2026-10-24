@@ -248,6 +248,14 @@ function handoverStrip(r){
         '<div class="hstate"><a href="/case/'+encodeURIComponent(r.aid)+'">view trace &rarr;</a></div>'+
         '</div>';
     }
+    if(status === 'PENDING'){
+      return '<div class="handover pending">'+
+        decLine+
+        '<div class="hstate">&#9888; WAITING ON A PERSON &middot; '+e(desc)+'</div>'+
+        '<div class="hstate">Command <code>'+e(cmd)+'</code> needs an operator\'s OK before it runs.</div>'+
+        '<div class="hstate"><a href="/case/'+encodeURIComponent(r.aid)+'">view trace &rarr;</a></div>'+
+        '</div>';
+    }
     return '<div class="handover">'+
       decLine+
       '<div class="hstate">Executed at '+e(exT)+': '+e(desc)+'</div>'+

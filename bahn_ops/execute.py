@@ -124,29 +124,73 @@ EXECUTABLE_EFFECTS = {
         "claim_evidence_compared",
         "Claim evidence has been compared and logged.",
     ),
+    # Route and delivery adjustments — the model proposes these, and none
+    # of them contact a customer.
+    "ops.route.replan_delivery": (
+        "route_replan_requested",
+        "Route replan requested. Awaiting driver confirmation. No customer is contacted.",
+    ),
+    "ops.delivery.respond_to_window": (
+        "delivery_window_acknowledged",
+        "New delivery window acknowledged. Route adjusted. No customer is contacted.",
+    ),
+    "ops.handover.confirm_receiver": (
+        "handover_receiver_confirmed",
+        "Receiving contact confirmed. Handover trail updated. No customer is contacted.",
+    ),
+    "ops.driver.notify_route_change": (
+        "driver_notified_route_change",
+        "Driver notified of the route change. No customer is contacted.",
+    ),
+    "ops.readiness.confirm_desk_access": (
+        "desk_access_confirmed",
+        "Pickup desk access confirmed. Driver can proceed. No customer is contacted.",
+    ),
+    "ops.pickup.confirm_slot": (
+        "pickup_slot_confirmed",
+        "Pickup slot confirmed with the site. No customer is contacted.",
+    ),
+    "ops.condition.log_claim": (
+        "condition_claim_logged",
+        "Condition claim logged for review. No customer is contacted.",
+    ),
+    "ops.invoice.reference.confirm": (
+        "invoice_reference_confirmed",
+        "Invoice reference confirmed against the billing record. No customer is contacted.",
+    ),
 }
 
 
 def _classify(command):
-    """Return (kind, description, refused_reason) for a command."""
+    """Return (kind, description, refused_reason, pending) for a command.
+
+    Four outcomes:
+      - empty command             -> SUCCESS (no_command)
+      - customer-contact prefix   -> REFUSED (customer_contact_requires_approval)
+      - known command             -> SUCCESS (kind from EXECUTABLE_EFFECTS)
+      - unknown command           -> PENDING (awaiting operator allowlist review)
+    """
     cmd = str(command or "").strip()
     if not cmd:
-        return ("no_command", "No command recorded for this decision.", None)
+        return ("no_command", "No command recorded for this decision.", None, False)
     for prefix in CUSTOMER_CONTACT_PREFIXES:
         if cmd.startswith(prefix):
             return (
                 "refused_customer_contact",
                 "Refused: this command would contact a customer. Customer contact requires explicit operator approval.",
                 "customer_contact_requires_approval",
+                False,
             )
     if cmd in EXECUTABLE_EFFECTS:
         kind, desc = EXECUTABLE_EFFECTS[cmd]
-        return (kind, desc, None)
-    # Unknown command: refuse rather than invent
+        return (kind, desc, None, False)
+    # Unknown command: do not invent an effect, and do not run it.
+    # Flag for operator review — this is the "start with approvals" path.
     return (
-        "refused_unknown_command",
-        "Refused: no known effect for command " + cmd + ". This command is not on the executor's allowlist.",
-        "unknown_command",
+        "pending_operator_allowlist",
+        "Not executed: command " + cmd + " is not on the executor's allowlist. An operator must confirm before it runs.",
+        "pending_operator_allowlist",
+        True,
     )
 
 
@@ -187,8 +231,13 @@ def execute(alert_id):
     if prior:
         return {"ok": True, "already_executed": True, "execution": prior}
 
-    kind, description, refused_reason = _classify(command)
-    status = "REFUSED" if refused_reason else "SUCCESS"
+    kind, description, refused_reason, pending = _classify(command)
+    if pending:
+        status = "PENDING"
+    elif refused_reason:
+        status = "REFUSED"
+    else:
+        status = "SUCCESS"
     row = {
         "alert_id": alert_id,
         "decision": decision.get("decision"),
