@@ -373,6 +373,22 @@ def main():
             drivers,
         )
         prompt = build_prompt(alert, block)
+        stop_reason = stops_because(alert, order, refs)
+        if stop_reason:
+            result = deterministic(alert, order, refs)
+            result["model_error"] = "stopped before model: " + stop_reason
+            result["alert_id"] = alert.get("id")
+            result["order_id"] = order_id
+            result["generated_at"] = datetime.now(timezone.utc).isoformat()
+            result["status"] = "PENDING_REVIEW"
+            result["source_class"] = source_class(alert)
+            result["fact_state"] = fact_state(alert)
+            result["stops_because"] = stop_reason
+            with OUT.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(result, ensure_ascii=False) + "\n")
+            made += 1
+            print("STOPPED", alert.get("id"), "->", stop_reason[:70])
+            continue
         result, err = call_model(prompt)
         if result is None:
             result = deterministic(alert, order, refs)
