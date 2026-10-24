@@ -6,6 +6,10 @@ when the network or the free tier does not.
 
 Refusal is computed before any tool or model call, using the same signal
 tables agent.py already uses. A refusable case offers no tools.
+
+The model loop is real: tool results are fed back to the model as
+role=tool messages, and the model is called again with the accumulated
+conversation until it calls propose_action or exhausts MAX_TURNS.
 """
 
 import json
@@ -26,6 +30,7 @@ from bahn_ops.agent import (
 )
 
 MAX_TURNS = 6
+MAX_TOKENS = 3000
 
 
 def scripted_driver(question):
@@ -100,7 +105,7 @@ def run_tool(name, args, ctx):
     return "unknown tool: " + str(name)
 
 
-def model_turn(prompt, tools):
+def model_turn(messages, tools):
     load_env()
     key = os.environ.get("BAHN_MODEL_API_KEY", "").strip()
     base = os.environ.get("BAHN_MODEL_BASE_URL", "").strip() or "https://api.openai.com/v1"
@@ -111,10 +116,10 @@ def model_turn(prompt, tools):
     body = json.dumps(
         {
             "model": name,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "tools": [{"type": "function", "function": t} for t in tools],
             "temperature": 0.2,
-            "max_tokens": 600,
+            "max_tokens": MAX_TOKENS,
         }
     ).encode("utf-8")
     req = urllib.request.Request(
@@ -124,7 +129,7 @@ def model_turn(prompt, tools):
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=45) as resp:
+        with urllib.request.urlopen(req, timeout=60) as resp:
             return json.loads(resp.read().decode("utf-8")), None
     except urllib.error.HTTPError as e:
         return None, "http " + str(e.code) + " " + e.read().decode("utf-8", "replace")[:200]
@@ -152,12 +157,7 @@ def deterministic_turn(ctx):
         "kind": "propose",
         "summary": "Confirm the pickup window with " + str(ref) + " and hand the operator one decision",
         "rationale": "The driver answered both readiness questions. The evidence supports proposing, not acting.",
-        "tool_calls": [
-            "get_order",
-            "get_messages",
-            "get_reservations",
-            "ask_driver x2",
-        ],
+        "tool_calls": ["get_order", "get_messages", "get_reservations", "ask_driver x2"],
     }
 
 
@@ -200,38 +200,77 @@ def run_case(alert_id):
         record["driver_replies"] = ctx["driver_replies"]
         record["proposal"] = record["turns"][-1]
         return record
+
     tools = tool_definitions()
-    prompt = (
-        "You are the Bahn operations agent for one case. Use the tools to read "
-        "the facts, ask the driver before changing anything, then hand a person "
-        "exactly one decision with propose_action. Never contact a customer. "
-        "Case: " + json.dumps({"alert": alert, "order": order}, ensure_ascii=False)
-    )
-    payload, err = model_turn(prompt, tools)
-    if payload is not None and "choices" in payload:
-        msg = payload["choices"][0]["message"]
-        calls = msg.get("tool_calls") or []
-        record["mode"] = "model"
-        for c in calls[:MAX_TURNS]:
+    system_msg = {
+        "role": "system",
+        "content": (
+            "You are the Bahn operations agent for one case. Do the cheap work first: "
+            "read the order and messages, ask the driver before changing any promise, "
+            "then hand a person exactly one decision with propose_action. "
+            "Never contact a customer. Never execute anything. "
+            "Case: " + json.dumps({"alert": alert, "order": order}, ensure_ascii=False)
+        ),
+    }
+    messages = [system_msg]
+    record["mode"] = "model"
+    proposed = False
+    for turn in range(MAX_TURNS):
+        payload, err = model_turn(messages, tools)
+        if payload is None or "choices" not in payload:
+            record["model_error"] = err or "no payload"
+            break
+        choice = payload["choices"][0]
+        msg = choice.get("message") or {}
+        finish = choice.get("finish_reason") or ""
+        tool_calls = msg.get("tool_calls") or []
+        assistant_entry = {"role": "assistant", "content": msg.get("content") or ""}
+        if tool_calls:
+            assistant_entry["tool_calls"] = tool_calls
+        messages.append(assistant_entry)
+        if not tool_calls:
+            if msg.get("content"):
+                record["turns"].append({"assistant": str(msg["content"])[:800]})
+            if finish == "length":
+                record["model_error"] = "truncated at max_tokens"
+            break
+        for c in tool_calls:
             fn = (c.get("function") or {}).get("name")
             raw = (c.get("function") or {}).get("arguments") or "{}"
             try:
                 args = json.loads(raw)
             except json.JSONDecodeError:
                 args = {}
+            if fn == "propose_action":
+                record["turns"].append({"tool": "propose_action", "args": args})
+                record["proposal"] = {
+                    "kind": "propose",
+                    "summary": args.get("summary", ""),
+                    "rationale": args.get("rationale", ""),
+                    "needs_approval": True,
+                }
+                proposed = True
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": c.get("id") or "",
+                    "content": "proposal recorded, awaiting human approval",
+                })
+                break
             result = run_tool(fn, args, ctx)
             record["turns"].append({"tool": fn, "args": args, "result": str(result)[:400]})
-        content = msg.get("content")
-        if content:
-            record["turns"].append({"assistant": str(content)[:800]})
-        record["driver_replies"] = ctx["driver_replies"]
-        if not record["turns"]:
-            record["turns"].append(deterministic_turn(ctx))
-            record["mode"] = "deterministic"
-    else:
+            messages.append({
+                "role": "tool",
+                "tool_call_id": c.get("id") or "",
+                "content": str(result)[:2000],
+            })
+        if proposed:
+            break
+    record["driver_replies"] = ctx["driver_replies"]
+    if not proposed and record.get("proposal") is None:
         record["turns"].append(deterministic_turn(ctx))
-        record["model_error"] = err
-    record["proposal"] = record["turns"][-1]
+        record["mode"] = "deterministic"
+        record["model_error"] = record.get("model_error") or "no proposal within " + str(MAX_TURNS) + " turns"
+    record["proposal"] = record.get("proposal") or record["turns"][-1]
     return record
 
 
