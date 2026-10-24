@@ -85,6 +85,15 @@ SOURCE_BY_SIGNAL = {
     "TRACKING_GAP": "app",
     "RELEASE_DOCUMENT_UNCLEAR": "site",
     "SITE_ACCESS_UNCONFIRMED": "site",
+    "DRIVER_AVAILABILITY_RISK": "driver",
+    "FERRY_CONNECTION_RISK": "ferry",
+    "DELIVERY_ACCESS_RISK": "site",
+    "PROOF_REVIEW": "document",
+    "CONDITION_CLAIM_REVIEW": "document",
+    "INVOICE_REFERENCE_QUERY": "billing",
+    "CONDITION_CLAIM": "customer",
+    "SITE_ACCESS_CONFLICT": "site",
+    "DELIVERY_PROMISE_UNACHIEVABLE": "site",
     "EMPTY_PICKUP": "site",
     "FERRY_SOLD_OUT": "ferry",
     "SAFETY_STOP": "driver",
@@ -98,6 +107,15 @@ STATE_BY_SIGNAL = {
     "TRACKING_GAP": "stale",
     "RELEASE_DOCUMENT_UNCLEAR": "reported",
     "SITE_ACCESS_UNCONFIRMED": "reported",
+    "DRIVER_AVAILABILITY_RISK": "reported",
+    "FERRY_CONNECTION_RISK": "quoted",
+    "DELIVERY_ACCESS_RISK": "reported",
+    "PROOF_REVIEW": "missing",
+    "CONDITION_CLAIM_REVIEW": "disputed",
+    "INVOICE_REFERENCE_QUERY": "disputed",
+    "CONDITION_CLAIM": "disputed",
+    "SITE_ACCESS_CONFLICT": "conflicting",
+    "DELIVERY_PROMISE_UNACHIEVABLE": "conflicting",
     "EMPTY_PICKUP": "reported",
     "FERRY_SOLD_OUT": "quoted",
     "SAFETY_STOP": "reported",
@@ -126,13 +144,13 @@ def ref_class(ref):
 
 
 def source_class(alert):
+    sig = str(alert.get("signal") or "").upper()
+    if sig in SOURCE_BY_SIGNAL:
+        return SOURCE_BY_SIGNAL[sig]
     for ref in (alert.get("evidence_refs") or []):
         c = ref_class(ref)
         if c:
             return c
-    sig = str(alert.get("signal") or "").upper()
-    if sig in SOURCE_BY_SIGNAL:
-        return SOURCE_BY_SIGNAL[sig]
     if alert.get("driver_report_message_id"):
         return "driver"
     if alert.get("latest_site_conversation_id"):
