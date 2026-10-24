@@ -56,6 +56,17 @@ const SOURCE_LABEL = {
   message:'from a message',
   operator:'from an operator',
   unknown:'source unclear',
+  // Endpoint source enums — these come from order_endpoint_details.last_confirmed_source
+  MANAGED_SITE_PROFILE:'the site\'s own record',
+  BRANCH_STOCK:'branch stock system',
+  YARD_OPERATOR:'the yard operator',
+  DRIVER_APP:'the driver\'s app',
+  CUSTOMER_PORTAL:'the customer portal',
+  DEALER_PORTAL:'the dealer portal',
+  SITE_CONFIRMATION:'the site confirmed in person',
+  OPERATOR_NOTE:'an operator note',
+  FERRY_LINE:'the ferry line',
+  DOCUMENT:'a document',
 };
 const STATE_LABEL = {
   stale:'stale — needs a fresh check',
@@ -189,16 +200,16 @@ function renderCard(r){
 
   if(r.sb){
     return '<div class=c data-aid="'+e(r.aid)+'">'+header+what+chips+
-      '<div class=stop><b>Agent stopped</b> '+e(r.sb)+'</div>'+
+      '<div class=stop><b>Not ready for action</b> '+e(r.sb)+'</div>'+
       '<div class=a><span class=dslot></span><button onclick="decide(\''+e(r.aid)+'\',\'change\',\''+e(r.cmd||'')+'\')">Change</button>'+caseLink+'</div>'+
       handoverStrip(r)+'</div>';
   }
 
   if(r.g){
-    const effect='<div class=effect><b>Accepting will</b> run <code>'+e(r.cmd||'alert.resolve')+'</code> on '+e(r.r)+' &middot; no customer contact &middot; needs your approval</div>';
+    const effect='<div class=effect><b>If you accept</b>, this runs: <code>'+e(r.cmd||'alert.resolve')+'</code> on '+e(r.r)+' &middot; no customer is contacted &middot; needs your approval</div>';
     return '<div class=c data-aid="'+e(r.aid)+'">'+header+what+chips+
-      '<div class=g><div class=gh>Agent proposes</div><p>'+e(r.g)+'</p>'+
-      (r.ra?'<p class=gr><b>Why</b> '+e(r.ra)+'</p>':'')+
+      '<div class=g><div class=gh>The agent suggests</div><p>'+e(r.g)+'</p>'+
+      (r.ra?'<p class=gr><b>Because</b> '+e(r.ra)+'</p>':'')+
       (r.oevFirst?'<p class=ge>from <code>'+e(r.oevFirst)+'</code>'+(r.oev>1?' and '+(r.oev-1)+' more':'')+'</p>':'')+
       '</div>'+effect+
       '<div class=a><span class=dslot></span>'+
@@ -209,7 +220,7 @@ function renderCard(r){
   }
 
   return '<div class="c notrun" data-aid="'+e(r.aid)+'">'+header+what+chips+
-    '<div class=notrunbox><b>The agent has not looked at this case yet.</b> '+
+    '<div class=notrunbox><b>The agent has not reached this case yet.</b> '+
     'Click below to run it on just this alert.</div>'+
     '<div class=a><span class=dslot></span>'+
     '<button class=runagent onclick="runAgent(\''+e(r.aid)+'\')">Run agent on this case</button>'+
