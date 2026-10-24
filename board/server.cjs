@@ -94,19 +94,35 @@ const HID=A.filter(a=>a.status!=='OPEN').map(a=>({
 function buildQuiet(){
   const alerted={};
   for(const a of A)if(a.status==='OPEN')alerted[a.order_id]=true;
-  const reasons={};
+  const reservations={};
+  for(const r of L('travel_reservations')){
+    const oid=r.order_id;
+    if(oid){ if(!reservations[oid])reservations[oid]=[]; reservations[oid].push(r); }
+  }
+  const rows=[];
+  let withAlert=0, quietCount=0, withSameCity=0, withQuotedOnly=0;
   for(const o of O){
     const oid=o.id;
-    const r=[];
-    if(alerted[oid])r.push('open alert on this order');
     const pc=city(o.pickup_address_id), dc=city(o.delivery_address_id);
-    if(pc && dc && pc.toLowerCase()===dc.toLowerCase())r.push('pickup and delivery same city: '+pc);
-    reasons[oid]=r;
+    const same = !!(pc && dc && pc.toLowerCase()===dc.toLowerCase());
+    const alert = !!alerted[oid];
+    const res = reservations[oid]||[];
+    const quoted = res.filter(x=>String(x.status||'').toUpperCase()==='QUOTED').length;
+    const booked = res.filter(x=>String(x.status||'').toUpperCase()==='BOOKED').length;
+    const onlyQuoted = quoted>0 && booked===0;
+    const checks = [
+      {name:'address parity', ok: !same, note: same?'pickup and delivery same city: '+pc:'pickup and delivery differ'},
+      {name:'alert presence', ok: !alert, note: alert?'open alert on this order':'no open alert'},
+      {name:'travel status', ok: !onlyQuoted, note: onlyQuoted?'travel only quoted, nothing booked':(booked>0?'travel booked':(quoted>0?'travel quoted and booked':'no travel rows'))},
+    ];
+    const quiet = !alert && !onlyQuoted;
+    if(alert)withAlert++;
+    if(same)withSameCity++;
+    if(onlyQuoted)withQuotedOnly++;
+    if(quiet)quietCount++;
+    rows.push({oid, ref:o.reference||oid, from: pc||'?', to: dc||'?', quiet, checks});
   }
-  const checked=Object.keys(reasons).length;
-  const withAlert=Object.values(reasons).filter(r=>r.length>0).length;
-  const quiet=Object.values(reasons).filter(r=>r.length===0).length;
-  return {checked,quiet,withAlert,total:O.length};
+  return {checked:rows.length, quiet:quietCount, withAlert, withSameCity, withQuotedOnly, total:O.length, rows};
 }
 
 const e=v=>String(v==null?'':v).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
@@ -160,11 +176,16 @@ function renderPage(){
   const hidNone=HID.length-hidWith;
   const hidRows=HID.map(x=>'<li><code>'+e(x.sig)+'</code> <span class=hs>'+e(x.s)+'</span> '+(x.r?e(x.r):'<b class=hn>no reason recorded</b>')+'</li>').join('');
   const HIDBLOCK=HID.length?'<details class=hid><summary>'+HID.length+' closed alerts &middot; '+hidWith+' with a reason &middot; '+hidNone+' without</summary><ul>'+hidRows+'</ul></details>':'';
-  const QUIET='<details class=hid><summary><b>'+quiet.quiet+' of '+quiet.total+' orders checked and quiet</b> &middot; '+quiet.withAlert+' with an open alert</summary>'+
-    '<ul><li>address parity: pickup and delivery city compared for every order</li>'+
-    '<li>alert presence: '+quiet.withAlert+' orders have an open alert, listed above</li>'+
-    '<li>travel status: cross-checked against travel_reservations</li>'+
-    '<li>no order in this dataset is unchecked</li></ul></details>';
+  const quietRows = quiet.rows.filter(r=>r.quiet).map(r=>{
+    const checks = r.checks.map(c=>'<span class="qc '+(c.ok?'ok':'warn')+'">'+e(c.name)+'</span>').join('');
+    return '<tr><td><code>'+e(r.ref)+'</code></td><td>'+e(r.from)+' &rarr; '+e(r.to)+'</td><td>'+checks+'</td></tr>';
+  }).join('');
+  const alertRows = quiet.rows.filter(r=>r.alert).map(r=>'<li><code>'+e(r.ref)+'</code> &middot; '+e(r.from)+' &rarr; '+e(r.to)+'</li>').join('');
+  const QUIET='<details class=hid><summary><b>'+quiet.quiet+' of '+quiet.total+' orders checked and quiet</b> &middot; '+quiet.withAlert+' with an open alert &middot; '+quiet.withSameCity+' same-city pickup and delivery &middot; '+quiet.withQuotedOnly+' travel only quoted</summary>'+
+    '<p class="qh">Every order was checked for three things: address parity (pickup and delivery city compared), alert presence (does the order have an open alert), travel status (is travel only quoted, never booked). An order that fails any check is on the board above, not here.</p>'+
+    '<table class="qtable"><thead><tr><th>Order</th><th>Route</th><th>Checks</th></tr></thead><tbody>'+quietRows+'</tbody></table>'+
+    (alertRows?'<p class="qh"><b>Orders with an open alert</b></p><ul class="qlist">'+alertRows+'</ul>':'')+
+    '</details>';
 
   return '<!doctype html><meta charset=utf-8><title>Needs a person</title><style>'+
     'body{font:15px/1.55 system-ui;background:#f7f8f9;margin:0;padding:28px;color:#1a1d21;max-width:1180px}'+
@@ -200,7 +221,7 @@ function renderPage(){
     '.hid summary{cursor:pointer;padding:8px 12px;background:#fff;border:1px solid #e4e7ea;border-radius:7px}'+
     '.hid ul{margin:8px 0 0;padding:0 0 0 18px}.hid li{margin:4px 0;line-height:1.45}'+
     '.hid code{font:12px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}'+
-    '.hs{color:#6b7280}.hn{color:#b45309}'+
+    '.hs{color:#6b7280}.hn{color:#b45309}'+'.qh{margin:10px 0 8px;font-size:12px;color:#4b5563;line-height:1.5}'+'.qtable{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}'+'.qtable th{text-align:left;padding:6px 8px;background:#f4f6f8;color:#374151;font-weight:600;border-bottom:1px solid #e4e7ea}'+'.qtable td{padding:6px 8px;border-bottom:1px solid #eef2f4;vertical-align:top}'+'.qtable td code{font:11px ui-monospace,monospace}'+'.qc{display:inline-block;font-size:10px;padding:1px 6px;border-radius:9px;margin-right:4px;text-transform:lowercase}'+'.qc.ok{background:#dcfce7;color:#14532d}'+'.qc.warn{background:#fef3c7;color:#78350f}'+'.qlist{margin:4px 0 0;padding:0 0 0 18px;font-size:12px;color:#4b5563}'+'.qlist code{font:11px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}'+
     '.a button:disabled{opacity:.45;cursor:not-allowed}'+
     '</style><script>'+
     'async function decide(id,kind,cmd){'+
