@@ -31,6 +31,7 @@ from bahn_ops.agent import (
     fact_state,
     stops_because,
 )
+from bahn_ops import inbox as driver_inbox
 
 MAX_TURNS = 6
 MAX_TOKENS = 3000
@@ -130,8 +131,24 @@ def run_tool(name, args, ctx):
     if name == "get_reservations":
         return json.dumps(ctx.get("reservations", [])[:8], ensure_ascii=False)
     if name == "ask_driver":
-        reply = scripted_driver(args.get("question", ""))
-        ctx["driver_replies"].append({"q": args.get("question", ""), "a": reply})
+        question = args.get("question", "")
+        reply = scripted_driver(question)
+        alert = ctx.get("alert") or {}
+        order = ctx.get("order") or {}
+        driver_id = (alert.get("driver_id") or order.get("driver_id") or order.get("assigned_driver_id") or "drv-unknown")
+        try:
+            rec = driver_inbox.ask(
+                driver_id=driver_id,
+                question=question,
+                order_id=order.get("id") or alert.get("order_id"),
+                alert_id=alert.get("id"),
+                scripted_reply=reply,
+                channel="email",
+            )
+            ctx.setdefault("inbox_refs", []).append(rec)
+        except Exception:
+            pass
+        ctx["driver_replies"].append({"q": question, "a": reply})
         return reply
     return "unknown tool: " + str(name)
 
@@ -474,6 +491,20 @@ def continue_case(alert_id, human_message):
     save_history(alert_id, new_hist)
     record["history"] = new_hist
     return record
+
+
+def case_inbox(alert_id):
+    """Return the inbox thread(s) for the driver(s) on this alert's order."""
+    alerts = load("alerts")
+    alert = next((a for a in alerts if a.get("id") == alert_id), None)
+    if not alert:
+        return []
+    orders = {o.get("id"): o for o in load("orders") if o.get("id")}
+    order = orders.get(alert.get("order_id"))
+    if not order:
+        return []
+    driver_id = (alert.get("driver_id") or order.get("driver_id") or order.get("assigned_driver_id") or "drv-unknown")
+    return [{"driver_id": driver_id, "thread": driver_inbox.thread(driver_id)}]
 
 
 if __name__ == "__main__":
