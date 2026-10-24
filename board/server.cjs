@@ -1,3 +1,22 @@
+// Load .env at startup so the case page can show provider/model
+(function loadDotEnv(){
+  try{
+    const path = require('path');
+    const fs = require('fs');
+    const envPath = path.join(__dirname, '..', '.env');
+    if(!fs.existsSync(envPath)) return;
+    for(const line of fs.readFileSync(envPath, 'utf8').split('\n')){
+      const s = line.trim();
+      if(!s || s.startsWith('#') || !s.includes('=')) continue;
+      const eq = s.indexOf('=');
+      const k = s.slice(0, eq).trim();
+      let v = s.slice(eq+1).trim();
+      if((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+      if(k && !process.env[k]) process.env[k] = v;
+    }
+  }catch(e){}
+})();
+
 const { render } = require('./page.js');
 const { renderCase } = require('./case.js');
 const { renderPhone } = require('./phone.js');

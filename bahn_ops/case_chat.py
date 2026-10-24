@@ -129,12 +129,42 @@ def tool_definitions():
 
 def run_tool(name, args, ctx):
     if name == "get_order":
-        o = ctx.get("order")
-        return json.dumps(o, ensure_ascii=False) if o else "no order on this case"
+        o = ctx.get("order") or {}
+        if not o:
+            return "no order on this case"
+        # Return a human-readable summary, not the raw row
+        parts = [
+            "Order " + str(o.get("reference") or o.get("id") or "?"),
+            "status: " + str(o.get("readiness_status") or o.get("display_lane") or "?"),
+            "route: " + str(o.get("pickup_site_id") or "?") + " -> " + str(o.get("delivery_site_id") or "?"),
+        ]
+        if o.get("active_plan_id"):
+            parts.append("active plan: " + str(o.get("active_plan_id")))
+        return " · ".join(parts)
     if name == "get_messages":
-        return json.dumps(ctx.get("messages", [])[:8], ensure_ascii=False)
+        msgs = ctx.get("messages", [])[:8]
+        if not msgs:
+            return "no messages on this order"
+        out = []
+        for m in msgs:
+            out.append(
+                str(m.get("authored_at") or "")[:10] + " · "
+                + str(m.get("author_type") or "?") + " via " + str(m.get("channel") or "?") + ": "
+                + str(m.get("body") or "")[:120]
+            )
+        return "\n".join(out)
     if name == "get_reservations":
-        return json.dumps(ctx.get("reservations", [])[:8], ensure_ascii=False)
+        res = ctx.get("reservations", [])[:8]
+        if not res:
+            return "no travel reservations on this order"
+        out = []
+        for r in res:
+            out.append(
+                str(r.get("status") or "?") + " · "
+                + str(r.get("origin") or r.get("from") or "?") + " -> "
+                + str(r.get("destination") or r.get("to") or "?")
+            )
+        return "\n".join(out)
     if name == "lookup_ferry_status":
         # The case's order; find its travel_reservations
         o = ctx.get("order") or {}
@@ -160,7 +190,7 @@ def run_tool(name, args, ctx):
         reply = scripted_driver(question)
         alert = ctx.get("alert") or {}
         order = ctx.get("order") or {}
-        driver_id = (alert.get("driver_id") or order.get("driver_id") or order.get("assigned_driver_id") or "drv-unknown")
+        driver_id = (alert.get("driver_id") or order.get("driver_id") or order.get("assigned_driver_id") or order.get("id") or "unknown")
         try:
             rec = driver_inbox.ask(
                 driver_id=driver_id,
@@ -245,7 +275,9 @@ def _system_message(alert, order, refusal):
         "What you can do:\n"
         "- read the order, messages, and travel reservations\n"
         "- look up the ferry status to see what is booked vs. only quoted\n"
-        "- ask the driver a question directly (they answer by phone or app)\n"
+        "- ask the driver a question directly, using the ask_driver tool (they answer by phone or app). "
+        "Do not ask the driver a question in your reply to the operator — the operator cannot relay it. "
+        "If you need a fact from the driver, call ask_driver, then summarize the reply in your text.\n"
         "- propose exactly one next action for the operator to approve, change, or reject\n\n"
         "What needs a person (the operator, not you):\n"
         "- contacting a customer, changing a booking, moving a date, spending money. "
@@ -554,7 +586,7 @@ def case_inbox(alert_id):
     order = orders.get(alert.get("order_id"))
     if not order:
         return []
-    driver_id = (alert.get("driver_id") or order.get("driver_id") or order.get("assigned_driver_id") or "drv-unknown")
+    driver_id = (alert.get("driver_id") or order.get("driver_id") or order.get("assigned_driver_id") or order.get("id") or "unknown")
     return [{"driver_id": driver_id, "thread": driver_inbox.thread(driver_id)}]
 
 
