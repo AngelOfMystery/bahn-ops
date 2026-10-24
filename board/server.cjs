@@ -131,10 +131,11 @@ function buildQuiet(){
 const e=v=>String(v==null?'':v).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 
 function renderCard(r){
+  const triggered = String(r.w||'').slice(0,19).replace('T',' ');
   const chips='<div class=chips>'+
-    (r.sc?'<span class=chip>'+e(r.sc)+'</span>':'')+
-    (r.fs?'<span class="chip st">'+e(r.fs)+'</span>':'')+
-    (r.oev?'<span class="chip ev">'+r.oev+' src</span>':'')+
+    (r.sc?'<span class=chip title="source: '+e(r.sc)+' — alert triggered at '+e(triggered)+'">'+e(r.sc)+'</span>':'')+
+    (r.fs?'<span class="chip st" title="state: '+e(r.fs)+' — first seen at '+e(triggered)+'">'+e(r.fs)+'</span>':'')+
+    (r.oev?'<span class="chip ev" title="'+r.oev+' evidence references cited by this proposal">'+r.oev+' src</span>':'')+
     '</div>';
   const caseLink='<a class=caselink href="/case/'+encodeURIComponent(r.aid)+'">Open case &rarr;</a>';
   const header='<div class=h><b>'+e(r.r)+'</b><span>'+e(r.f)+' &rarr; '+e(r.t)+'</span><small>'+e(r.s)+'</small></div>';

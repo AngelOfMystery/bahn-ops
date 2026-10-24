@@ -404,6 +404,15 @@ def main():
                 result.setdefault("command", FALLBACK_COMMAND)
                 result.setdefault("needs_approval", True)
                 result["source"] = "model"
+                # Every card needs source and state so the board can show chips,
+                # regardless of which path produced the row.
+                if not result.get("source_class"):
+                    result["source_class"] = source_class(alert)
+                if not result.get("fact_state"):
+                    result["fact_state"] = fact_state(alert)
+                if not result.get("stops_because"):
+                    result["stops_because"] = stops_because(alert, order, refs) or ""
+                result["stop_enforced"] = bool(result.get("stops_because"))
         result["alert_id"] = alert.get("id")
         result["order_id"] = order_id
         result["generated_at"] = datetime.now(timezone.utc).isoformat()
