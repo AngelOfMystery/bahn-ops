@@ -470,7 +470,7 @@ function renderPage(){
     const failed = r.checks.filter(c=>!c.ok).map(c=>'<b class=qc-fail>'+e(c.name)+'</b>');
     return '<tr><td><code>'+e(r.ref)+'</code></td><td>'+e(r.from)+' &rarr; '+e(r.to)+'</td><td>'+failed.join(', ')+'</td></tr>';
   }).join('');
-  const QUIET='<details class=hid><summary><b>'+quiet.quiet+' of '+quiet.total+' orders passed all 9 checks</b> &middot; '+quiet.withAlert+' with an open alert &middot; '+quiet.withSameCity+' same-city &middot; '+quiet.withQuotedOnly+' travel only quoted &middot; '+quiet.withMissingRelease+' missing release &middot; '+quiet.withMissingHandover+' missing handover</summary>'+
+  const QUIET='<details class=hid><summary><b>'+quiet.quiet+' of '+quiet.total+' orders passed all 9 automated checks</b> &middot; '+quiet.withAlert+' with an open alert &middot; '+quiet.withSameCity+' same-city &middot; '+quiet.withQuotedOnly+' travel only quoted &middot; '+quiet.withMissingRelease+' missing release &middot; '+quiet.withMissingHandover+' missing handover</summary>'+
     '<p class="qh"><b>Nine checks per order.</b> If any check fails, the order is on the board above, not here. The check list is below. Hover any check to see what was verified.</p>'+
     '<div class="qtable-wrap"><table class="qtable"><thead><tr><th>Order</th><th>Route</th><th>Checks</th></tr></thead><tbody>'+quietRows+'</tbody></table></div>'+
     (surfacedRows?'<p class="qh"><b>'+quiet.rows.filter(r=>!r.quiet).length+' orders failed at least one check and are on the board above</b></p><div class="qtable-wrap"><table class="qtable"><thead><tr><th>Order</th><th>Route</th><th>Failed checks</th></tr></thead><tbody>'+surfacedRows+'</tbody></table></div>':'')+
@@ -532,7 +532,7 @@ function renderPage(){
       (notrun>0?' &middot; <b>'+notrun+'</b> the agent is still working on':'')+
       ' &middot; <span style="color:#9ca3af">'+Q.length+' on the board</span></p>'+
     QUIET+HIDBLOCK+
-    (cards||'<div class="emptyboard"><b>All '+quiet.total+' orders checked. Nothing needs you.</b><br>Every order passed address parity, alert presence, and travel status.</div>');
+    (cards||'<div class="emptyboard"><b>All '+quiet.total+' orders passed the automated checks. Nothing needs you right now.</b><br>Nine automated checks per order — address parity, alert presence, travel status, release document, handover proof, assignment health, message freshness, tracking freshness, condition claim.</div>');
 }
 
 function runCaseFor(alertId, res){
