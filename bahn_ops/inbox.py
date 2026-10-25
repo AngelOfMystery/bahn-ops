@@ -203,6 +203,30 @@ def all_drivers():
     return sorted(ids)
 
 
+
+
+def latest_reply_for(driver_id, question_id=None):
+    """Return the most recent reply body for a driver, or None.
+
+    If question_id is given, return the latest reply for that question
+    (operator overrides win). Otherwise return the newest reply across
+    all questions.
+    """
+    replies = _read(_in_path(driver_id))
+    # Filter to non-superseded
+    live = [r for r in replies if not r.get("superseded")]
+    if not live:
+        return None
+    if question_id:
+        matching = [r for r in live if r.get("question_id") == question_id]
+        if matching:
+            # newest wins
+            matching.sort(key=lambda r: r.get("received_at") or "")
+            return matching[-1]
+    live.sort(key=lambda r: r.get("received_at") or "")
+    return live[-1] if live else None
+
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "list":

@@ -65,16 +65,35 @@ def save_history(alert_id, history):
 
 def scripted_driver(question):
     q = (question or "").lower()
-    if "safe" in q or "okay" in q or "hurt" in q:
+
+    # Safety first — this always wins if asked
+    if "safe" in q or "okay" in q or "hurt" in q or "injur" in q:
         return "Yes, I'm safe. I'm in the service area, not on the motorway."
-    if "where" in q or "location" in q:
+
+    # Photo request — returns a note about the photo being sent
+    if "photo" in q or "picture" in q or "image" in q or "warning light" in q:
+        return "Photo sent via the app. It shows a red warning light on the dashboard, engine still running. I've pulled over to a safe spot."
+
+    # Location
+    if "where" in q or "location" in q or "position" in q:
         return "At the service station just past the border crossing, at the pumps."
-    if "photo" in q or "picture" in q or "light" in q:
-        return "Sending a photo now. The red light is on the dashboard, engine still running."
-    if "ready" in q or "papers" in q:
+
+    # Release / paperwork
+    if "release" in q or "paper" in q or "document" in q or "signed" in q:
         return "The car is ready. The papers are in the glovebox, and the release form is signed."
-    if "ferry" in q or "ship" in q:
+
+    # Ferry / travel
+    if "ferry" in q or "ship" in q or "crossing" in q or "boarding" in q:
         return "I'm on the afternoon crossing, booking is confirmed, boarding in 40 minutes."
+
+    # ETA / timing
+    if "eta" in q or "when" in q or "time" in q or "soon" in q:
+        return "About 40 minutes out from the delivery address, maybe an hour if the traffic holds."
+
+    # Generic readiness
+    if "ready" in q:
+        return "The car is ready. The papers are in the glovebox, and the release form is signed."
+
     return "I don't know that yet. I'll check and call back."
 
 
@@ -150,9 +169,10 @@ def run_tool(name, args, ctx):
         out = []
         for m in msgs:
             out.append(
-                str(m.get("authored_at") or "")[:10] + " · "
+                "[msg:" + str(m.get("id") or "?") + "] "
+                + str(m.get("authored_at") or "")[:19] + " · "
                 + str(m.get("author_type") or "?") + " via " + str(m.get("channel") or "?") + ": "
-                + str(m.get("body") or "")[:120]
+                + str(m.get("body") or "")[:200]
             )
         return "\n".join(out)
     if name == "get_reservations":
@@ -161,10 +181,16 @@ def run_tool(name, args, ctx):
             return "no travel reservations on this order"
         out = []
         for r in res:
+            status = str(r.get("status") or "?").upper()
+            boarded = bool(r.get("boarding_scan_at") or r.get("boarded_at"))
+            dep = str(r.get("departure_at") or r.get("scheduled_at") or "?")[:19]
             out.append(
-                str(r.get("status") or "?") + " · "
-                + str(r.get("origin") or r.get("from") or "?") + " -> "
-                + str(r.get("destination") or r.get("to") or "?")
+                "[res:" + str(r.get("id") or "?") + "] "
+                + status
+                + (" (boarded)" if boarded else " (not boarded)")
+                + " · " + str(r.get("origin") or r.get("from") or "?")
+                + " -> " + str(r.get("destination") or r.get("to") or "?")
+                + " · departs " + dep
             )
         return "\n".join(out)
     if name == "lookup_ferry_status":
@@ -189,10 +215,41 @@ def run_tool(name, args, ctx):
         return json.dumps(out, ensure_ascii=False)
     if name == "ask_driver":
         question = args.get("question", "")
-        reply = scripted_driver(question)
         alert = ctx.get("alert") or {}
         order = ctx.get("order") or {}
-        driver_id = (alert.get("driver_id") or order.get("driver_id") or order.get("assigned_driver_id") or order.get("id") or "unknown")
+        # Look up the real assigned driver via work_assignments, then
+        # fall back to fields on the alert/order, then to the order id.
+        driver_id = None
+        try:
+            assignments = load("work_assignments")
+            for a in assignments:
+                if a.get("order_id") == (order or {}).get("id") and a.get("driver_id"):
+                    driver_id = a["driver_id"]
+                    break
+        except Exception:
+            pass
+        if not driver_id:
+            driver_id = (alert.get("driver_id") or order.get("driver_id") or order.get("assigned_driver_id") or order.get("id") or "unknown")
+
+        # Check if the operator has already overridden a reply for this driver.
+        # If so, return the override — do not generate a new question.
+        existing = None
+        try:
+            existing = driver_inbox.latest_reply_for(driver_id)
+        except Exception:
+            pass
+
+        if existing:
+            reply = existing.get("body", "")
+            ctx["driver_replies"].append({"q": "[read from inbox]", "a": reply})
+            # If the reply is an override, tell the model explicitly so it
+            # can reason about it
+            if existing.get("source") == "operator_override":
+                return "[OPERATOR-OVERRIDE] " + reply
+            return reply
+
+        # No existing reply: queue a new question, script an answer
+        reply = scripted_driver(question)
         try:
             rec = driver_inbox.ask(
                 driver_id=driver_id,
@@ -680,7 +737,26 @@ def continue_case_streaming(alert_id, human_message):
         elif h.get("role") == "agent":
             t = h.get("turn") or {}
             if t.get("tool") and t.get("tool") != "propose_action":
-                messages.append({"role": "tool", "tool_call_id": "", "content": str(t.get("result", ""))[:2000]})
+                # Reconstruct a minimal assistant tool_calls entry so the
+                # replay is provider-shaped. Use a stable synthetic id.
+                synth_id = "call_" + str(t.get("tool", "")) + "_" + str(len(messages))
+                messages.append({
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": synth_id,
+                        "type": "function",
+                        "function": {
+                            "name": t.get("tool", ""),
+                            "arguments": json.dumps(t.get("args") or {}, ensure_ascii=False)
+                        }
+                    }]
+                })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": synth_id,
+                    "content": str(t.get("result", ""))[:2000]
+                })
             elif t.get("assistant"):
                 messages.append({"role": "assistant", "content": t["assistant"]})
     messages.append({"role": "user", "content": str(human_message)})

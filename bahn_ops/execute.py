@@ -237,7 +237,13 @@ def execute(alert_id):
     elif refused_reason:
         status = "REFUSED"
     else:
-        status = "SUCCESS"
+        # If the description honestly says "awaiting" or "requested", the
+        # executor's success is a request being recorded, not a resolution.
+        low = (description or "").lower()
+        if "awaiting" in low or "requested" in low or "queued" in low:
+            status = "REQUESTED"
+        else:
+            status = "SUCCESS"
     row = {
         "alert_id": alert_id,
         "decision": decision.get("decision"),

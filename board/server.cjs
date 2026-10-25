@@ -111,8 +111,27 @@ const stateLabel = k => STATE_LABEL[k] || k || 'state unclear';
 const OM={};for(const o of O)OM[o.id]=o;
 
 const _oursExists=(()=>{try{return f.existsSync(OURS)}catch(e){return false}})();
-const _all=P.filter(q=>!q.superseded_by_proposal_id&&!q.superseded_at);
-const live=_oursExists?_all:P;
+// Merge: our current proposals first, then shipped examples for any alert
+// we have not yet produced a proposal for. Never lose a shipped example
+// just because the local file exists.
+const _all=(()=>{
+  const ours = P.filter(q=>!q.superseded_by_proposal_id&&!q.superseded_at);
+  const shipped = L('agent_proposals').map(q=>Object.assign({}, q, {
+    created_at: q.created_at||q.generated_at,
+    source:'shipped',
+    model_error:null,
+    superseded_by_proposal_id:null,
+    superseded_at:null
+  }));
+  if (!ours.length) return shipped;
+  const seen = new Set(ours.map(q => q.alert_id).filter(Boolean));
+  const merged = [...ours];
+  for (const q of shipped) {
+    if (q.alert_id && !seen.has(q.alert_id)) merged.push(q);
+  }
+  return merged;
+})();
+const live=_all;
 // Rebuilt per request — do NOT freeze at startup
 function buildProposalIndexes(){
   const oursExists = f.existsSync(OURS);
@@ -130,7 +149,7 @@ const S={critical:0,high:1,medium:2,low:3};
 
 function buildCard(a, pa, po){
   const o=OM[a.order_id]||{};
-  const q=PA[a.id]||PO[a.order_id]||{};
+  const q=(pa && pa[a.id]) || (po && po[a.order_id]) || {};
   const hasProposal=!!(q.summary || q.stops_because);
   const decForAlert = (()=>{ try{ for(const x of LD()){ if(x.alert_id===a.id) return x } }catch(e){} return null })();
   return {
@@ -334,7 +353,9 @@ function renderCard(r){
   const triggered = String(r.w||'').slice(0,19).replace('T',' ');
   const isAck = r.status === 'ACKNOWLEDGED';
   const factWhen = (r.ep && (r.ep.pc || r.ep.dc)) ? String(r.ep.pc || r.ep.dc).slice(0,19).replace('T',' ') : triggered;
-  const factSource = (r.ep && (r.ep.ps || r.ep.ds)) ? String(r.ep.ps || r.ep.ds) : r.sc;
+  // The alert's own source is what surfaced the case. Only fall back to the
+  // endpoint's last-confirmed source if the alert source is empty.
+  const factSource = r.sc || (r.ep && (r.ep.ps || r.ep.ds)) || '';
   const srcFull = factSource || r.sc || '';
   const stFull = r.fs || '';
   const chips='<div class=chips>'+
@@ -404,6 +425,14 @@ function handoverStrip(r){
         decLine+
         '<div class="hstate">&#9888; WAITING ON A PERSON &middot; '+e(desc)+'</div>'+
         '<div class="hstate">Command <code>'+e(cmd)+'</code> needs an operator\'s OK before it runs.</div>'+
+        '<div class="hstate"><a href="/case/'+encodeURIComponent(r.aid)+'">view trace &rarr;</a></div>'+
+        '</div>';
+    }
+    if(status === 'REQUESTED'){
+      return '<div class="handover pending">'+
+        decLine+
+        '<div class="hstate">&#9679; REQUESTED at '+e(exT)+' &middot; '+e(desc)+'</div>'+
+        '<div class="hstate">Command <code>'+e(cmd)+'</code> was recorded. The downstream system has not confirmed.</div>'+
         '<div class="hstate"><a href="/case/'+encodeURIComponent(r.aid)+'">view trace &rarr;</a></div>'+
         '</div>';
     }
@@ -683,6 +712,20 @@ h.createServer((q,s)=>{
       let d={};
       try{d=JSON.parse(b)}catch(e){s.writeHead(400,{'content-type':'application/json'});return s.end(JSON.stringify({ok:false,error:'bad json'}))}
       if(!d.alert_id||!d.decision){s.writeHead(400,{'content-type':'application/json'});return s.end(JSON.stringify({ok:false,error:'alert_id and decision required'}))}
+
+      // A8: if the client sent a proposal version, verify it still matches.
+      // This blocks "accept a proposal that was replaced 3 seconds ago".
+      if(d.proposal_version){
+        try{
+          const {pa,po} = buildProposalIndexes();
+          const current = pa[d.alert_id] || po[d.alert_id];
+          const currentVer = current && (current.created_at || current.generated_at || '');
+          if(currentVer && currentVer !== d.proposal_version){
+            s.writeHead(409,{'content-type':'application/json'});
+            return s.end(JSON.stringify({ok:false,error:'This proposal has been replaced. Reload the page and decide again.',current_version:currentVer}));
+          }
+        }catch(e){}
+      }
       const row={alert_id:d.alert_id,decision:d.decision,command:d.command||'',at:new Date().toISOString()};
       f.appendFileSync(DEC,JSON.stringify(row)+'\n','utf8');
       // Only an explicit 'accept' fires the executor. 'change' records the

@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -e
+cd ~/IdeaProjects/TESTING/Bahn
+
+cat > bahn_ops/human_summaries.json <<'JSONEOF'
+{
+  "alert-x105238e92e7f3ba6": {
+    "opener": "The driver's phone has not updated its position in a while. Nobody should move this car until someone actually hears where they are.",
+    "hint": "Ask the driver to check in with their current location before touching the delivery promise."
+  },
+  "alert-xad90176c4d6e6fc5": {
+    "opener": "The seller has put a hold on the car, and the signed release form has not been confirmed as on file. The car is not moving until both clear.",
+    "hint": "Get the signed release from the site, and clarify with the seller whether the hold is still active."
+  },
+  "alert-x9dd9663e6059eeba": {
+    "opener": "The pickup site says the car is there, but neither of the two apparent pickup routes will hand it over — reception says no keys, the side gate says it is not a release desk.",
+    "hint": "Find out who actually has the keys and who is authorized to release the car before sending a driver."
+  },
+  "alert-xd6b460da263340c0": {
+    "opener": "The assigned driver is not sure they will be well enough to make the pickup, and nobody has lined up a backup.",
+    "hint": "Prepare a backup driver without cancelling the current one. The driver may recover."
+  },
+  "alert-x5259ff7f2e03f0e6": {
+    "opener": "The driver is stuck in traffic and is likely to miss the ferry check-in window for this crossing.",
+    "hint": "Check whether a later crossing is available. If not, look at a hotel for the night."
+  },
+  "alert-x6fc9eee283ddbfd5": {
+    "opener": "The customer has restricted the delivery access window, and the driver's current route will not arrive inside it.",
+    "hint": "Either confirm a new access window with the customer, or re-route the driver to arrive inside the current one."
+  },
+  "alert-x450a8bb94b6b80c7": {
+    "opener": "The signed handover document is missing, even though the customer has asked for it more than once and the receiving party has submitted photos.",
+    "hint": "Search the handover trail for the missing signature, or ask the receiving party to re-submit."
+  },
+  "alert-x15a3a8c8be8357bf": {
+    "opener": "The customer reported a mark on the car after delivery. There are photos, but the receiving party cannot confirm the mark was there at drop-off.",
+    "hint": "Compare the pickup condition photos against the delivery photos before agreeing to a claim."
+  },
+  "alert-x5e2a521421e447cb": {
+    "opener": "The customer's accounts team needs the purchase order reference for this delivery to reconcile the invoice.",
+    "hint": "Look up the PO reference against the billing record and reply to the customer's accounts team."
+  },
+  "alert-xb71481bda30b3ff5": {
+    "opener": "The customer reported a mark on the car after delivery. The driver does not remember it being mentioned at pickup or delivery.",
+    "hint": "Compare the pickup and delivery photos. If the mark is new, log a claim. If not, reply with the photos."
+  },
+  "alert-xdc098cd0772eab0b": {
+    "opener": "The branch and the yard disagree on where the car and its keys are. Until they agree, no driver should be sent to collect it.",
+    "hint": "Call the branch and the yard, and reconcile which one actually has the car and the keys."
+  },
+  "alert-x9cd05869f6be7f09": {
+    "opener": "The second driver missed the collection slot, and the original delivery promise can no longer be met.",
+    "hint": "Confirm the next available collection slot with the site, then get approval to move the customer's delivery promise."
+  }
+}
+JSONEOF
+
+python3 -c "import json, pathlib; d=json.loads(pathlib.Path('bahn_ops/human_summaries.json').read_text()); print(f'F5 data: {len(d)} alerts with human summaries')"
