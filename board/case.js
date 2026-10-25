@@ -121,12 +121,14 @@ function summaryFor(r) {
 function suggestionsFor(r) {
   if (r.refusal) {
     return [
+      "investigate",
       "What evidence would unblock this case?",
       "Ask the driver where exactly they are"
     ];
   }
   if (r.proposal && r.proposal.kind === "propose") {
     return [
+      "investigate",
       "Ask the driver one more question before I accept",
       "What's the risk if I accept this now?"
     ];

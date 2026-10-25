@@ -490,6 +490,19 @@ def continue_case(alert_id, human_message):
                     "role": "assistant",
                     "content": "[prior " + str(t["kind"]) + "] " + str(t.get("summary", "")),
                 })
+    # If the operator says "investigate", replace the message with a
+    # structured instruction that triggers the full autonomous loop.
+    low = (human_message or "").lower()
+    if any(w in low for w in ("investigate", "go investigate", "do your thing", "check this case", "handle this")):
+        human_message = (
+            "Investigate this case thoroughly. Do the cheap work first: read the order, "
+            "read the messages, check any reservations, look up the ferry status if relevant. "
+            "Then, if any fact is missing or unclear, ask the driver through ask_driver. "
+            "Ask more than one question if needed. Once you have the facts, either propose "
+            "one action or stop and explain what is missing. Do the whole investigation "
+            "yourself — do not ask me what to check next."
+        )
+
     messages.append({"role": "user", "content": str(human_message)})
 
     record = {
@@ -512,7 +525,7 @@ def continue_case(alert_id, human_message):
     if not tools:
         # Refused case: no propose_action available, but ask_driver and read tools
         # ARE safe to offer. The refusal guard blocks writes, not questions.
-        read_tools = [t for t in tool_definitions() if t["name"] in ("get_order", "get_messages", "get_reservations", "ask_driver")]
+        read_tools = [t for t in tool_definitions() if t["name"] in ("get_order", "get_messages", "get_reservations", "ask_driver", "lookup_ferry_status")]
         record["tools"] = [t["name"] for t in read_tools]
         payload, merr = model_turn(messages, read_tools)
         if payload and payload.get("choices"):
