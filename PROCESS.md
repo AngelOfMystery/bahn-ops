@@ -130,6 +130,22 @@ The process we would tell the next team is: get the reviewers in early, not late
 
 **What we threw away from the reviews.** The "add a real database with a versioned proposal state" recommendation. It would have been more correct, but it would have cost four hours and broken the fresh-clone demo. The point of the demo is not production-grade state management; it's the human-agent decision loop. We kept the loop and lost the architectural purity.
 
+## The quality check we did with AI we didn't build with
+
+The four-phase coding story above is about agents that wrote code. There is a fifth phase that isn't: at the end of the build, we asked three *other* AI surfaces to check our work. Not to write anything — to review.
+
+**ChatGPT**, for a structural read. We pasted the briefs and the repo README and asked: "what would cost this submission points against the stated criteria?" It gave a long answer, most of it restating the brief. The useful part was one observation: *"Your 'Change' button and your 'Accept' button have the same effect unless the backend distinguishes them."* That was the approval-boundary bug that both external reviewers later found independently. ChatGPT caught it first, in a check we did before the reviewers.
+
+**Claude**, for a code review. We gave it the actual `server.cjs` and `case_chat.py` and asked what would break under a judge's click. It found the same `Change`-executes problem, plus the hardcoded `alert.resolve` in `runCaseFor()`, plus the quiet-orders check being too shallow. Its strongest line: *"Your UI promises one thing and your executor records another."* That sentence is why we rewrote the proposal path to preserve the actual command.
+
+**Arena.ai's web-search battle mode**, for a currency check. We asked whether the specific claims in our submission — the AnyAPI endpoint, the Gemini model name, the free-tier rate limit — were still accurate as of submission. Arena runs two models with live web search and shows you both answers side by side. Both agreed on the endpoint, both flagged the rate limit as "documented but not always enforced." That let us write the deterministic fallback paragraph in the README with confidence, because we knew the number was real.
+
+**What this cost and what it bought.** About 90 minutes of pasting and reading. It found two P0 defects that survived four days of coding. The reason it worked is that we treated the AI quality checks as *different* from the AI coding agents — different prompts, different expectations, different surface. The coding agents were asked to build. The checking agents were asked to find what was built wrong. Both questions went to GPT-family models, but the second question is why the second round caught things.
+
+**What we would not do again.** We pasted the whole repo into ChatGPT once and asked "is this good?" — that produced 2000 words of encouragement and zero findings. The prompt that worked was the narrow one: *"Here is one file. Here is the one criterion. What would a hostile judge catch?"* The broader the question, the more the model agrees with you. The narrower the question, the more it disagrees.
+
+**A note on method.** The three checks were not redundant. ChatGPT caught the approval bug through the UI description. Claude caught the same bug through the code. Arena caught the model-name and rate-limit facts. Three different angles on the same submission. If we had only done one, we would have missed two of the findings. If we had done all three at hour 6 instead of hour 30, we would have had more time to fix them.
+
 ## What we would tell the next team
 
 Get the brief before you get the stack. We spent the first hours building
