@@ -113,13 +113,22 @@ const OM={};for(const o of O)OM[o.id]=o;
 const _oursExists=(()=>{try{return f.existsSync(OURS)}catch(e){return false}})();
 const _all=P.filter(q=>!q.superseded_by_proposal_id&&!q.superseded_at);
 const live=_oursExists?_all:P;
-const PA={},PO={};
-for(const q of live){if(q.alert_id)PA[q.alert_id]=q;if(q.order_id)PO[q.order_id]=q}
+// Rebuilt per request — do NOT freeze at startup
+function buildProposalIndexes(){
+  const oursExists = f.existsSync(OURS);
+  const source = oursExists ? P.filter(q=>!q.superseded_by_proposal_id&&!q.superseded_at) : P;
+  const pa = {}, po = {};
+  for(const q of source){
+    if(q.alert_id) pa[q.alert_id]=q;
+    if(q.order_id) po[q.order_id]=q;
+  }
+  return {pa, po};
+}
 
 
 const S={critical:0,high:1,medium:2,low:3};
 
-function buildCard(a){
+function buildCard(a, pa, po){
   const o=OM[a.order_id]||{};
   const q=PA[a.id]||PO[a.order_id]||{};
   const hasProposal=!!(q.summary || q.stops_because);
@@ -129,6 +138,7 @@ function buildCard(a){
     f:city(o.pickup_address_id)||o.pickup_site_id||'?',
     t:city(o.delivery_address_id)||o.delivery_site_id||'?',
     s:a.severity||'',
+    status:a.status||'OPEN',
     y:a.summary||'',
     w:a.triggered_at||'',
     g:q.summary||'',
@@ -164,16 +174,21 @@ function buildCard(a){
 }
 
 function buildQueue(){
-  return A.filter(a=>a.status==='OPEN')
-    .map(buildCard)
+  const {pa, po} = buildProposalIndexes();
+  return A.filter(a=>a.status==='OPEN' || a.status==='ACKNOWLEDGED')
+    .map(a=>buildCard(a, pa, po))
     .sort((x,y)=>((S[x.s]??9)-(S[y.s]??9))||String(x.w).localeCompare(String(y.w)));
 }
 
-const HID=A.filter(a=>a.status!=='OPEN').map(a=>({
+const HID=A.filter(a=>a.status!=='OPEN' && a.status!=='ACKNOWLEDGED').map(a=>({
   s:a.status,
   r:(a.resolution_reason||a.acknowledgement_reason||'').trim(),
   sig:a.signal||''
 }));
+
+// Acknowledged but not resolved: still needs a person, but someone owns it.
+// These stay on the board, marked as "acknowledged, still in progress."
+const ACK_COUNT = A.filter(a=>a.status==='ACKNOWLEDGED').length;
 
 function buildQuiet(){
   const alerted={};
@@ -317,6 +332,7 @@ const e=v=>String(v==null?'':v).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&'
 
 function renderCard(r){
   const triggered = String(r.w||'').slice(0,19).replace('T',' ');
+  const isAck = r.status === 'ACKNOWLEDGED';
   const factWhen = (r.ep && (r.ep.pc || r.ep.dc)) ? String(r.ep.pc || r.ep.dc).slice(0,19).replace('T',' ') : triggered;
   const factSource = (r.ep && (r.ep.ps || r.ep.ds)) ? String(r.ep.ps || r.ep.ds) : r.sc;
   const srcFull = factSource || r.sc || '';
@@ -325,6 +341,7 @@ function renderCard(r){
     (srcFull?'<span class=chip title="'+e(srcFull)+' — recorded at '+e(factWhen)+' (alert raised '+e(triggered)+')">'+e(sourceLabel(srcFull))+'</span>':'')+
     (stFull?'<span class="chip st" title="'+e(stFull)+' — recorded at '+e(factWhen)+' (alert raised '+e(triggered)+')">'+e(stateLabel(stFull))+'</span>':'')+
     (r.oev?'<span class="chip ev" title="'+r.oev+' pieces of evidence cited: '+e((r.oevTables||[]).slice(0,4).join(', '))+(r.oevTables && r.oevTables.length>4?' and '+r.oevTables.length-4+' more':'')+'">'+r.oev+' source'+(r.oev===1?'':'s')+'</span>':'')+
+    (isAck?'<span class="chip ack" title="Someone owns this case, but the recovery is not done">acknowledged</span>':'')+
     '</div>';
   const caseLink='<a class=caselink href="/case/'+encodeURIComponent(r.aid)+'">Open case &rarr;</a>';
   const header='<div class=h><b>'+e(r.r)+'</b><span>'+e(r.f)+' &rarr; '+e(r.t)+'</span><small>'+e(r.s)+'</small></div>';
@@ -465,7 +482,7 @@ function renderPage(){
     '.hid ul{margin:8px 0 0;padding:0 0 0 18px}.hid li{margin:4px 0;line-height:1.45}'+
     '.hid code{font:12px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}'+
     '.hs{color:#6b7280}.hn{color:#b45309}'+'.qh{margin:10px 0 8px;font-size:12px;color:#4b5563;line-height:1.5}'+'.qtable{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}'+'.qtable th{text-align:left;padding:6px 8px;background:#f4f6f8;color:#374151;font-weight:600;border-bottom:1px solid #e4e7ea}'+'.qtable td{padding:6px 8px;border-bottom:1px solid #eef2f4;vertical-align:top}'+'.qtable td code{font:11px ui-monospace,monospace}'+'.qc{display:inline-block;font-size:10px;padding:1px 6px;border-radius:9px;margin-right:4px;text-transform:lowercase}'+'.qc.ok{background:#dcfce7;color:#14532d}'+'.qc.warn{background:#fef3c7;color:#78350f}'+'.qlist{margin:4px 0 0;padding:0 0 0 18px;font-size:12px;color:#4b5563}'+'.qlist code{font:11px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}'+
-    '.a button:disabled{opacity:.45;cursor:not-allowed}'+'.handover{margin:11px 0 0;padding:9px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;font-size:12px;color:#166534}'+'.handover .hstate{padding:2px 0}'+'.handover .hstate.done{font-weight:600;color:#15803d}'+'.handover .hstate code{background:#fff;border:1px solid #bbf7d0;border-radius:4px;padding:1px 5px;font:11px ui-monospace,monospace}'+'.handover a{color:#15803d;text-decoration:none}'+'.handover.refused{background:#fef2f2;border-color:#fecaca}'+'.handover.refused .hstate.done{color:#991b1b}'+'.handover .hstate.refused{color:#b91c1c;font-weight:600}'+'.handover.refused a{color:#b91c1c}'+'.handover.pending{background:#fef3c7;border-color:#fde68a;color:#78350f}'+'.handover.pending .hstate.done{color:#92400e}'+'.handover.pending a{color:#92400e}'+'.emptyboard{padding:32px 24px;text-align:center;color:#4b5563;background:#fff;border:1px dashed #d5d9dd;border-radius:9px;line-height:1.55}'+'.emptyboard b{color:#15803d;font-size:15px;display:block;margin-bottom:4px}'+'.qtable-wrap{max-height:520px;overflow-y:auto;border:1px solid #e4e7ea;border-radius:7px;margin:8px 0}'+'.qtable-wrap .qtable{margin:0;border-radius:0}'+'.qc{cursor:help}'+'.qc-fail{color:#b91c1c;font-size:11px;font-weight:600}'+'.whint{color:#6b7280;font-size:13px;margin:4px 0 0;line-height:1.5}'+'.btnspinner{display:inline-block;width:10px;height:10px;border:2px solid currentColor;border-radius:50%;border-top-color:transparent;animation:spin .7s linear infinite;margin-right:6px;vertical-align:middle}'+'@keyframes spin{to{transform:rotate(360deg)}}'+
+    '.a button:disabled{opacity:.45;cursor:not-allowed}'+'.handover{margin:11px 0 0;padding:9px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;font-size:12px;color:#166534}'+'.handover .hstate{padding:2px 0}'+'.handover .hstate.done{font-weight:600;color:#15803d}'+'.handover .hstate code{background:#fff;border:1px solid #bbf7d0;border-radius:4px;padding:1px 5px;font:11px ui-monospace,monospace}'+'.handover a{color:#15803d;text-decoration:none}'+'.handover.refused{background:#fef2f2;border-color:#fecaca}'+'.handover.refused .hstate.done{color:#991b1b}'+'.handover .hstate.refused{color:#b91c1c;font-weight:600}'+'.handover.refused a{color:#b91c1c}'+'.handover.pending{background:#fef3c7;border-color:#fde68a;color:#78350f}'+'.handover.pending .hstate.done{color:#92400e}'+'.handover.pending a{color:#92400e}'+'.emptyboard{padding:32px 24px;text-align:center;color:#4b5563;background:#fff;border:1px dashed #d5d9dd;border-radius:9px;line-height:1.55}'+'.emptyboard b{color:#15803d;font-size:15px;display:block;margin-bottom:4px}'+'.qtable-wrap{max-height:520px;overflow-y:auto;border:1px solid #e4e7ea;border-radius:7px;margin:8px 0}'+'.qtable-wrap .qtable{margin:0;border-radius:0}'+'.qc{cursor:help}'+'.qc-fail{color:#b91c1c;font-size:11px;font-weight:600}'+'.chip.ack{background:#fef3c7;border-color:#fde68a;color:#92400e;font-weight:600}'+'.whint{color:#6b7280;font-size:13px;margin:4px 0 0;line-height:1.5}'+'.btnspinner{display:inline-block;width:10px;height:10px;border:2px solid currentColor;border-radius:50%;border-top-color:transparent;animation:spin .7s linear infinite;margin-right:6px;vertical-align:middle}'+'@keyframes spin{to{transform:rotate(360deg)}}'+
     '</style><script>'+
     'async function decide(id,kind,cmd){'+
     ' try{const r=await fetch("/decide",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({alert_id:id,decision:kind,command:cmd||""})});'+
@@ -482,8 +499,9 @@ function renderPage(){
     '</script>'+
     '<h1>Needs a person</h1><p style="margin:0 0 22px;font-size:13px"><a href="/phone" style="color:#6b7280;text-decoration:none">Phone log &rarr;</a></p>'+
     '<p class=m><b>'+proposed+'</b> ready for your call &middot; <b>'+stopped+'</b> that need more evidence'+
+      (ACK_COUNT>0?' &middot; <b>'+ACK_COUNT+'</b> acknowledged, still in progress':'')+
       (notrun>0?' &middot; <b>'+notrun+'</b> the agent is still working on':'')+
-      ' &middot; <span style="color:#9ca3af">'+Q.length+' open in total</span></p>'+
+      ' &middot; <span style="color:#9ca3af">'+Q.length+' on the board</span></p>'+
     QUIET+HIDBLOCK+
     (cards||'<div class="emptyboard"><b>All '+quiet.total+' orders checked. Nothing needs you.</b><br>Every order passed address parity, alert presence, and travel status.</div>');
 }
