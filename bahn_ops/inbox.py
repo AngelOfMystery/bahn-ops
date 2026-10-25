@@ -227,6 +227,18 @@ def latest_reply_for(driver_id, question_id=None):
     return live[-1] if live else None
 
 
+
+
+def alert_id_for(question_id):
+    """Return the alert_id for a question_id by scanning the outbox."""
+    for name in OUT_DIR.glob("*.jsonl") if OUT_DIR.exists() else []:
+        for r in _read(name):
+            if r.get("question_id") == question_id:
+                return r.get("alert_id")
+    return None
+
+
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "list":

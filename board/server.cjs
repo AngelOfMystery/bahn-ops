@@ -768,10 +768,27 @@ h.createServer((q,s)=>{
       const reply = (body && body.reply) || '';
       if(!qid || !reply.trim()){s.writeHead(400,{'content-type':'application/json'});return s.end(JSON.stringify({ok:false,error:'question_id and reply required'}))}
       try{
-        const payload = JSON.stringify({qid, reply});
+        const payload = JSON.stringify({qid: qid, reply: reply});
         const py = "import sys,json;d=json.loads(sys.stdin.read());sys.path.insert(0,'.');from bahn_ops.inbox import override;print(json.dumps(override(d['qid'],d['reply'])))";
         const out = cp.execFileSync('python3',['-c',py],{cwd:p.join(__dirname,'..'),input:payload,timeout:30000,encoding:'utf8'});
         const record = JSON.parse(out);
+
+        // Append a driver-update event to the case history so the model
+        // sees the new reply on the next turn.
+        try{
+          const py2 = "import sys,json;sys.path.insert(0,'.');from bahn_ops.inbox import alert_id_for;print(alert_id_for('" + qid.replace(/[^A-Za-z0-9_\-]/g,'') + "') or '')";
+          const outAlert = cp.execFileSync('python3',['-c',py2],{cwd:p.join(__dirname,'..'),timeout:15000,encoding:'utf8'}).trim();
+          if(outAlert){
+            const histPayload = JSON.stringify({alert_id: outAlert, reply: reply});
+            const py3 = "import sys,json,pathlib;from datetime import datetime,timezone;d=json.loads(sys.stdin.read());" +
+                        "p=pathlib.Path('bahn_ops/case_history')/(d['alert_id']+'.json');p.parent.mkdir(parents=True,exist_ok=True);" +
+                        "h=json.loads(p.read_text()) if p.exists() else [];" +
+                        "h.append({'role':'operator','at':datetime.now(timezone.utc).isoformat(),'content':'[Phone log: the driver just replied]'+d['reply']});" +
+                        "p.write_text(json.dumps(h,indent=2,ensure_ascii=False));print('ok')";
+            cp.execFileSync('python3',['-c',py3],{cwd:p.join(__dirname,'..'),input:histPayload,timeout:15000,encoding:'utf8'});
+          }
+        }catch(e2){}
+
         s.writeHead(record.ok?200:400,{'content-type':'application/json'});
         return s.end(JSON.stringify(record));
       }catch(e){
@@ -781,19 +798,6 @@ h.createServer((q,s)=>{
     });
   }
 
-  if(q.url==='/executions'){
-    s.writeHead(200,{'content-type':'application/json'});
-    return s.end(JSON.stringify(LE()));
-  }
-
-  if(q.url.match(/^\/executions\/[^\/]+/)){
-    const m = q.url.match(/^\/executions\/([^\/]+)/);
-    const id = decodeURIComponent(m[1]).replace(/[^A-Za-z0-9_\-]/g,'');
-    let latest=null;
-    try{ for(const x of LE()){ if(x.alert_id===id) latest=x } }catch(e){}
-    s.writeHead(latest?200:404,{'content-type':'application/json'});
-    return s.end(JSON.stringify(latest||{ok:false,error:'no execution'}));
-  }
 
   s.writeHead(200,{'content-type':'text/html;charset=utf-8'});
   s.end(renderPage());
