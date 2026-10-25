@@ -58,8 +58,10 @@ function renderConversation(history) {
 function stateHeadline(r) {
   if (!r.ok && r.error) return "The agent could not run on this case";
   if (r.refusal) return "Waiting for you";
-  if (r.proposal && r.proposal.kind === "propose") return "Waiting for you";
-  if (r.proposal && r.proposal.kind === "refuse") return "Waiting for you";
+  if (r.proposal && r.proposal.summary) return "Waiting for you";
+  if (r.proposal && r.proposal.kind) return "Waiting for you";
+  if ((r.turns || []).some(t => t && t.kind)) return "Waiting for you";
+  if ((r.history || []).length > 0) return "Waiting for you";
   return "The agent is still working on this case";
 }
 
