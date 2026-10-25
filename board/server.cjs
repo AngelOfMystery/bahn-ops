@@ -548,7 +548,8 @@ function runCaseFor(alertId, res){
     // Preserve the agent's actual command if it named one. Fall back to
     // alert.resolve only when the proposal had no command at all.
     const propCommand = (prop.command || '').trim();
-    const command = propCommand || 'alert.resolve';
+    // Never invent an executable command for an incomplete proposal.
+    const command = propCommand;
     // Evidence refs: prefer ids the proposal actually cited. If absent,
     // derive typed refs from the alert and order ids.
     const evidenceRefs = (() => {
@@ -726,7 +727,26 @@ h.createServer((q,s)=>{
           }
         }catch(e){}
       }
-      const row={alert_id:d.alert_id,decision:d.decision,command:d.command||'',at:new Date().toISOString()};
+      if(!['accept','change'].includes(d.decision)){
+        s.writeHead(400,{'content-type':'application/json'});
+        return s.end(JSON.stringify({ok:false,error:'decision must be accept or change'}));
+      }
+
+      // The browser is untrusted. Resolve the command from the current
+      // server-side proposal; never record a client-supplied command.
+      const {pa,po} = buildProposalIndexes();
+      const proposal = pa[d.alert_id] || po[d.alert_id];
+      if(!proposal){
+        s.writeHead(404,{'content-type':'application/json'});
+        return s.end(JSON.stringify({ok:false,error:'No current proposal exists for this alert'}));
+      }
+      const verifiedCommand = String(proposal.command || '').trim();
+      if(d.decision === 'accept' && !verifiedCommand){
+        s.writeHead(409,{'content-type':'application/json'});
+        return s.end(JSON.stringify({ok:false,error:'Cannot accept a proposal with no command'}));
+      }
+
+      const row={alert_id:d.alert_id,decision:d.decision,command:verifiedCommand,at:new Date().toISOString()};
       f.appendFileSync(DEC,JSON.stringify(row)+'\n','utf8');
       // Only an explicit 'accept' fires the executor. 'change' records the
       // intent but does not run the previous proposal.

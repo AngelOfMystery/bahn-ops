@@ -165,14 +165,19 @@ def _classify(command):
     """Return (kind, description, refused_reason, pending) for a command.
 
     Four outcomes:
-      - empty command             -> SUCCESS (no_command)
+      - empty command             -> REFUSED (missing_command)
       - customer-contact prefix   -> REFUSED (customer_contact_requires_approval)
       - known command             -> SUCCESS (kind from EXECUTABLE_EFFECTS)
       - unknown command           -> PENDING (awaiting operator allowlist review)
     """
     cmd = str(command or "").strip()
     if not cmd:
-        return ("no_command", "No command recorded for this decision.", None, False)
+        return (
+            "refused_no_command",
+            "Refused: this decision has no command. Nothing was executed.",
+            "missing_command",
+            False,
+        )
     for prefix in CUSTOMER_CONTACT_PREFIXES:
         if cmd.startswith(prefix):
             return (
@@ -257,11 +262,9 @@ def execute(alert_id):
         _append_jsonl(EXE, refusal_row)
         return {"ok": True, "execution": refusal_row}
 
-    command = decision.get("command") or ""
-    # If the decision has no command, pull from the proposal
-    if not command:
-        prop = find_proposal(alert_id) or {}
-        command = prop.get("command") or ""
+    # Execute only the command captured in the accepted decision.
+    # Never silently substitute a proposal command at execution time.
+    command = str(decision.get("command") or "").strip()
 
     # Idempotent per (alert, command, decided_at). A replay of the same
     # acceptance returns the prior row. A different acceptance with the same

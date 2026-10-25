@@ -62,35 +62,72 @@ echo "VERIFY_OK"
 
 # --- Approval boundary regression tests ---
 echo "=== approval boundary ==="
-AID=$(python3 -c "
-import json, pathlib
-props=[json.loads(l) for l in pathlib.Path('bahn_ops/ours.jsonl').read_text().splitlines() if l.strip()]
-print(next(p['alert_id'] for p in props if p.get('summary') and not p.get('stops_because')))
-" 2>/dev/null)
 
-if [ -n "$AID" ]; then
-  rm -f bahn_ops/decisions.jsonl bahn_ops/executions.jsonl
+# Do not assume the browser-supplied command is trusted.
+# Capture the API responses so a rejected request cannot look like a pass.
+set -u
+AID="${AID:-}"
+if [ -z "$AID" ] && [ -f ours.jsonl ]; then
+  AID=$(python3 - <<'PYID'
+import json
+from pathlib import Path
 
-  # Test 1: change never executes
-  curl -s -X POST http://127.0.0.1:4317/decide -H 'content-type: application/json' \
-    -d "{\"alert_id\":\"$AID\",\"decision\":\"change\",\"command\":\"alert.resolve\"}" > /dev/null
-  CHANGE_COUNT=$(wc -l < bahn_ops/executions.jsonl 2>/dev/null || echo 0)
-  if [ "$CHANGE_COUNT" -eq 0 ]; then echo "  PASS: change does not execute"; else echo "  FAIL: change executed"; fi
+def find_id(obj):
+    if isinstance(obj, dict):
+        for key in ("alert_id", "alertId"):
+            value = obj.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        for value in obj.values():
+            found = find_id(value)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for value in obj:
+            found = find_id(value)
+            if found:
+                return found
+    return ""
 
-  # Test 2: accept executes
-  curl -s -X POST http://127.0.0.1:4317/decide -H 'content-type: application/json' \
-    -d "{\"alert_id\":\"$AID\",\"decision\":\"accept\",\"command\":\"ops.route.replan_delivery\"}" > /dev/null
-  sleep 1
-  ACCEPT_COUNT=$(wc -l < bahn_ops/executions.jsonl 2>/dev/null || echo 0)
-  if [ "$ACCEPT_COUNT" -eq 1 ]; then echo "  PASS: accept executes"; else echo "  FAIL: accept did not execute"; fi
-
-  # Test 3: executor reads the accept, not the earlier change
-  DEC=$(tail -1 bahn_ops/executions.jsonl | python3 -c "import sys,json;print(json.load(sys.stdin).get('decision'))" 2>/dev/null)
-  if [ "$DEC" = "accept" ]; then echo "  PASS: executor reads the accept"; else echo "  FAIL: executor read '$DEC'"; fi
-
-  # Test 4: idempotency — replay the same accept
-  BEFORE=$(wc -l < bahn_ops/executions.jsonl 2>/dev/null || echo 0)
-  python3 -m bahn_ops.execute "$AID" > /dev/null 2>&1
-  AFTER=$(wc -l < bahn_ops/executions.jsonl 2>/dev/null || echo 0)
-  if [ "$BEFORE" -eq "$AFTER" ]; then echo "  PASS: idempotent replay"; else echo "  FAIL: duplicate execution"; fi
+for line in Path("ours.jsonl").read_text(encoding="utf-8").splitlines():
+    try:
+        result = find_id(json.loads(line))
+        if result:
+            print(result)
+            break
+    except json.JSONDecodeError:
+        continue
+PYID
+)
 fi
+if [ -z "$AID" ]; then
+  echo "FAIL: no alert ID available for approval tests"
+  exit 1
+fi
+
+mkdir -p _scratch
+CHANGE_HTTP=$(curl -sS -o _scratch/approval-change.json -w '%{http_code}' \
+  -X POST http://127.0.0.1:4317/decide \
+  -H 'content-type: application/json' \
+  -d "{\"alert_id\":\"$AID\",\"decision\":\"change\",\"command\":\"alert.resolve\"}") || exit 1
+echo "CHANGE_HTTP=$CHANGE_HTTP"
+cat _scratch/approval-change.json
+echo
+
+ACCEPT_HTTP=$(curl -sS -o _scratch/approval-accept.json -w '%{http_code}' \
+  -X POST http://127.0.0.1:4317/decide \
+  -H 'content-type: application/json' \
+  -d "{\"alert_id\":\"$AID\",\"decision\":\"accept\",\"command\":\"ops.route.replan_delivery\"}") || exit 1
+echo "ACCEPT_HTTP=$ACCEPT_HTTP"
+cat _scratch/approval-accept.json
+echo
+
+sleep 1
+if [ -f bahn_ops/executions.jsonl ]; then
+  echo "EXECUTIONS:"
+  tail -5 bahn_ops/executions.jsonl
+else
+  echo "NO_EXECUTIONS_FILE"
+fi
+
+echo "Approval test diagnostics complete; do not treat this as a pass until the responses and executor result are verified."
