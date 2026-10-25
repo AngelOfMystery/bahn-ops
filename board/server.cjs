@@ -561,6 +561,20 @@ function renderPage(){
     'async function decide(id,kind,cmd){if(kind=="change"){location.href="/case/"+encodeURIComponent(id)+"#talk";return}'+
     ' try{const r=await fetch("/decide",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({alert_id:id,decision:kind,command:cmd||""})});'+
     ' const j=await r.json();if(j.ok){loadDecisions()}else{alert("could not record: "+(j.error||"unknown"))}}catch(e){alert("could not record: "+e.message)}}'+
+    'async function runAll(btn){'+
+    '  btn.disabled=true;'+
+    '  btn.innerHTML="<span class=btnspinner></span>Agent is working";'+
+    '  try{'+
+    '    await fetch("/run-all",{method:"POST"});'+
+    '    const t=setInterval(async()=>{'+
+    '      try{'+
+    '        const st=await (await fetch("/run-all/status")).json();'+
+    '        btn.innerHTML="<span class=btnspinner></span>Agent: "+st.done+" of "+st.total+" done";'+
+    '        if(!st.running){clearInterval(t);location.reload()}'+
+    '      }catch(e){}'+
+    '    },2500);'+
+    '  }catch(e){btn.disabled=false;btn.textContent="Run failed"}'+
+    '}'+
     'async function runAgent(id){'+
     ' const btn=event.target;btn.disabled=true;btn.innerHTML="<span class=btnspinner></span>Running agent...";'+
     ' try{const r=await fetch("/run-case/"+encodeURIComponent(id),{method:"POST"});const j=await r.json();'+
@@ -576,7 +590,7 @@ function renderPage(){
       (ackOnly>0?' &middot; <b>'+ackOnly+'</b> acknowledged, still in progress':'')+
       (notrun>0?' &middot; <b>'+notrun+'</b> the agent is still working on':'')+
       ' &middot; <span style="color:#9ca3af">'+Q.length+' on the board</span></p>'+
-    QUIET+HIDBLOCK+
+    ((notrun+ackOnly)>0?'<p class=m><button class=runagent onclick="runAll(this)">Run the agent on the '+(notrun+ackOnly)+' cases that need a proposal</button></p>':'')+QUIET+HIDBLOCK+
     (cards||'<div class="emptyboard"><b>All '+quiet.total+' orders passed the automated checks. Nothing needs you right now.</b><br>Nine automated checks per order — address parity, alert presence, travel status, release document, handover proof, assignment health, message freshness, tracking freshness, condition claim.</div>');
 }
 
@@ -642,6 +656,54 @@ function sayToCase(alertId, message, res){
     res.writeHead(500,{'content-type':'application/json'});
     return res.end(JSON.stringify({ok:false,error:String(err.message||err).slice(0,300)}));
   }
+}
+
+const { promisify } = require('util');
+const execFileP = promisify(cp.execFile);
+const AUTO = { running: false, done: 0, total: 0, errors: [] };
+
+async function runCaseAsync(alertId) {
+  const id = String(alertId).replace(/[^A-Za-z0-9_\-]/g, '');
+  const py = "import sys,json;sys.path.insert(0,'.');from bahn_ops.case_chat import run_case;print(json.dumps(run_case('" + id + "')))";
+  const out = await execFileP('python3', ['-c', py], { cwd: p.join(__dirname, '..'), timeout: 180000, encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
+  const record = JSON.parse(out.stdout);
+  if (!record.ok) throw new Error(record.error || 'agent failed');
+  const prop = record.proposal || {};
+  const propRefs = prop.evidence_refs || [];
+  const evidenceRefs = (Array.isArray(propRefs) && propRefs.length) ? propRefs : [{ id: record.alert_id, table: 'alerts' }, { id: record.order_id, table: 'orders' }];
+  const row = {
+    alert_id: record.alert_id,
+    order_id: record.order_id,
+    summary: prop.summary || '',
+    rationale: prop.rationale || '',
+    command: (prop.command || '').trim(),
+    evidence_refs: evidenceRefs,
+    needs_approval: true,
+    source_class: record.source_class || '',
+    fact_state: record.fact_state || '',
+    stops_because: record.refusal || '',
+    model_error: record.model_error || '',
+    source: record.mode || 'deterministic',
+    status: 'PENDING_REVIEW',
+    generated_at: record.generated_at
+  };
+  f.appendFileSync(OURS, JSON.stringify(row) + '\n', 'utf8');
+  return row;
+}
+
+async function autorunMissing() {
+  if (AUTO.running) return;
+  const todo = buildQueue().filter(r => !r.g && !r.sb).map(r => r.aid);
+  AUTO.running = true;
+  AUTO.done = 0;
+  AUTO.total = todo.length;
+  AUTO.errors = [];
+  for (const id of todo) {
+    try { await runCaseAsync(id); }
+    catch (err) { AUTO.errors.push(id + ': ' + String(err.message || err).slice(0, 120)); }
+    AUTO.done++;
+  }
+  AUTO.running = false;
 }
 
 function readJsonBody(q, cb){
@@ -815,6 +877,17 @@ h.createServer((q,s)=>{
     return;
   }
 
+  // POST /run-all -- fire the agent on every card with no proposal, async
+  if (q.method === 'POST' && q.url === '/run-all') {
+    autorunMissing();
+    s.writeHead(200, { 'content-type': 'application/json' });
+    return s.end(JSON.stringify({ ok: true, total: AUTO.total }));
+  }
+  if (q.url === '/run-all/status') {
+    s.writeHead(200, { 'content-type': 'application/json' });
+    return s.end(JSON.stringify(AUTO));
+  }
+
   // GET /phone -- all driver threads
   if(q.url==='/phone'){
     try{
@@ -874,5 +947,6 @@ h.createServer((q,s)=>{
 .listen(4317,'127.0.0.1',()=>{
   const Q=buildQueue();
   console.log('UP');
+  if (process.env.BAHN_AUTORUN === '1') autorunMissing();
   console.log('open',Q.length,'proposed',Q.filter(r=>r.g).length,'stopped',Q.filter(r=>r.sb).length,'notrun',Q.filter(r=>!r.g&&!r.sb).length);
 });
