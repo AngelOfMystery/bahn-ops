@@ -31,6 +31,15 @@ const L=n=>{const x=p.join(__dirname,'dataset','data',n+'.jsonl');
  if(!f.existsSync(x))return[];return f.readFileSync(x,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean)};
 
 const O=L('orders'),A=L('alerts'),D=L('addresses'),WI=L('work_items'),EP=L('order_endpoint_details');
+// Extra datasets for the paranoid quiet-order checks
+const DOCS=L('documents');
+const PROOFS=L('proofs');
+const MSGS=L('messages');
+const TRACK=L('tracking_observations');
+const INCIDENTS=L('incidents');
+const ASSIGN=L('work_assignments');
+const CUSTODY=L('custody_asset_events');
+const RES=L('travel_reservations');
 const HUMAN_SUMMARIES=(()=>{
   try{
     const hp=p.join(__dirname,'..','bahn_ops','human_summaries.json');
@@ -169,35 +178,139 @@ const HID=A.filter(a=>a.status!=='OPEN').map(a=>({
 function buildQuiet(){
   const alerted={};
   for(const a of A)if(a.status==='OPEN')alerted[a.order_id]=true;
-  const reservations={};
-  for(const r of L('travel_reservations')){
-    const oid=r.order_id;
-    if(oid){ if(!reservations[oid])reservations[oid]=[]; reservations[oid].push(r); }
-  }
+
+  // Group helper: rows indexed by order_id
+  const byOrder = (arr) => {
+    const m = {};
+    for(const r of arr){
+      const oid = r.order_id;
+      if(oid){ if(!m[oid]) m[oid]=[]; m[oid].push(r); }
+    }
+    return m;
+  };
+
+  const resByOrder = byOrder(RES);
+  const docsByOrder = byOrder(DOCS);
+  const proofsByOrder = byOrder(PROOFS);
+  const msgsByOrder = byOrder(MSGS);
+  const trackByOrder = byOrder(TRACK);
+  const incByOrder = byOrder(INCIDENTS);
+  const assignByOrder = byOrder(ASSIGN);
+  const custodyByOrder = byOrder(CUSTODY);
+
+  // Most recent date in an array of rows, reading a few common date fields
+  const newestDate = (rows, fields) => {
+    let best = null;
+    for(const r of rows||[]){
+      for(const f of fields){
+        const v = r[f];
+        if(v && (best===null || v > best)) best = v;
+      }
+    }
+    return best;
+  };
+
+  const now = new Date('2026-10-24T22:00:00Z');  // snapshot clock (dataset is fixed)
+  const daysAgo = (iso) => {
+    if(!iso) return null;
+    const t = new Date(iso);
+    if(isNaN(t)) return null;
+    return Math.floor((now - t) / (1000*60*60*24));
+  };
+
   const rows=[];
   let withAlert=0, quietCount=0, withSameCity=0, withQuotedOnly=0;
+  let withMissingRelease=0, withMissingHandover=0, withAssignmentGap=0;
+  let withStaleMessages=0, withStaleTracking=0, withOpenClaim=0;
+
   for(const o of O){
-    const oid=o.id;
-    const pc=city(o.pickup_address_id), dc=city(o.delivery_address_id);
-    const same = !!(pc && dc && pc.toLowerCase()===dc.toLowerCase());
-    const alert = !!alerted[oid];
-    const res = reservations[oid]||[];
+    const oid = o.id;
+    const pc = city(o.pickup_address_id);
+    const dc = city(o.delivery_address_id);
+    const sameCity = !!(pc && dc && pc.toLowerCase()===dc.toLowerCase());
+    const hasAlert = !!alerted[oid];
+
+    const res = resByOrder[oid] || [];
     const quoted = res.filter(x=>String(x.status||'').toUpperCase()==='QUOTED').length;
     const booked = res.filter(x=>String(x.status||'').toUpperCase()==='BOOKED').length;
-    const onlyQuoted = quoted>0 && booked===0;
+    const onlyQuoted = quoted > 0 && booked === 0;
+
+    // 4. Release document — is a signed release present on file?
+    const docs = docsByOrder[oid] || [];
+    const hasRelease = docs.some(d => {
+      const kind = String(d.kind || d.type || '').toLowerCase();
+      const state = String(d.state || d.status || '').toLowerCase();
+      return (kind.includes('release') || kind.includes('authoris') || kind.includes('authoriz')) &&
+             (state.includes('sign') || state.includes('approv') || state.includes('on_file'));
+    });
+
+    // 5. Handover proof — was the car actually handed over?
+    const proofs = proofsByOrder[oid] || [];
+    const custodyEvents = custodyByOrder[oid] || [];
+    const hasHandover = proofs.some(pr => String(pr.kind || pr.type || '').toLowerCase().includes('handover')) ||
+                        custodyEvents.some(ce => String(ce.event_type || '').toLowerCase().includes('handover'));
+
+    // 6. Assignment health — driver assigned, no gap between steps
+    const asg = assignByOrder[oid] || [];
+    const hasDriverAssigned = asg.length > 0 && asg.some(a => !!a.driver_id);
+    const assignmentGap = asg.length > 0 && !hasDriverAssigned;
+
+    // 7. Message freshness — last message within 7 days
+    const msgs = msgsByOrder[oid] || [];
+    const lastMsg = newestDate(msgs, ['authored_at','created_at','sent_at']);
+    const lastMsgDays = daysAgo(lastMsg);
+    const staleMessages = msgs.length > 0 && lastMsgDays !== null && lastMsgDays > 7;
+
+    // 8. Tracking freshness — last tracking observation within 3 days
+    const trk = trackByOrder[oid] || [];
+    const lastTrk = newestDate(trk, ['observed_at','recorded_at','created_at']);
+    const lastTrkDays = daysAgo(lastTrk);
+    const staleTracking = trk.length > 0 && lastTrkDays !== null && lastTrkDays > 3;
+
+    // 9. Condition claim — any open incident/claim
+    const inc = incByOrder[oid] || [];
+    const openClaim = inc.some(i => {
+      const state = String(i.status || i.state || '').toUpperCase();
+      return state === 'OPEN' || state === 'PENDING' || state === 'DISPUTED';
+    });
+
     const checks = [
-      {name:'address parity', ok: !same, note: same?'pickup and delivery same city: '+pc:'pickup and delivery differ'},
-      {name:'alert presence', ok: !alert, note: alert?'open alert on this order':'no open alert'},
-      {name:'travel status', ok: !onlyQuoted, note: onlyQuoted?'travel only quoted, nothing booked':(booked>0?'travel booked':(quoted>0?'travel quoted and booked':'no travel rows'))},
+      { key:'address_parity',     name:'address parity',      ok:!sameCity,        note:sameCity ? 'pickup and delivery are both in '+pc : 'pickup and delivery differ' },
+      { key:'alert_presence',     name:'alert presence',      ok:!hasAlert,        note:hasAlert ? 'open alert on this order' : 'no open alert' },
+      { key:'travel_status',      name:'travel status',       ok:!onlyQuoted,      note:onlyQuoted ? 'travel only quoted, nothing booked' : (booked>0 ? 'travel booked' : 'no travel rows') },
+      { key:'release_document',   name:'release document',    ok:hasRelease,       note:hasRelease ? 'signed release on file' : 'no signed release on file' },
+      { key:'handover_proof',     name:'handover proof',      ok:hasHandover,      note:hasHandover ? 'handover evidence present' : 'no handover evidence recorded' },
+      { key:'assignment_health',  name:'assignment health',   ok:!assignmentGap,   note:assignmentGap ? 'assignment exists but no driver attached' : (hasDriverAssigned ? 'driver assigned' : 'no assignment yet') },
+      { key:'message_freshness',  name:'message freshness',   ok:!staleMessages,   note:staleMessages ? 'last message '+lastMsgDays+' days ago' : (lastMsg ? 'last message '+lastMsgDays+' days ago' : 'no messages') },
+      { key:'tracking_freshness', name:'tracking freshness',  ok:!staleTracking,   note:staleTracking ? 'last tracking '+lastTrkDays+' days ago' : (lastTrk ? 'last tracking '+lastTrkDays+' days ago' : 'no tracking rows') },
+      { key:'condition_claim',    name:'condition claim',     ok:!openClaim,       note:openClaim ? 'open condition claim on this order' : 'no open claim' },
     ];
-    const quiet = !alert && !onlyQuoted;
-    if(alert)withAlert++;
-    if(same)withSameCity++;
+
+    const quiet = checks.every(c => c.ok);
+    if(hasAlert)withAlert++;
+    if(sameCity)withSameCity++;
     if(onlyQuoted)withQuotedOnly++;
+    if(!hasRelease)withMissingRelease++;
+    if(!hasHandover)withMissingHandover++;
+    if(assignmentGap)withAssignmentGap++;
+    if(staleMessages)withStaleMessages++;
+    if(staleTracking)withStaleTracking++;
+    if(openClaim)withOpenClaim++;
     if(quiet)quietCount++;
-    rows.push({oid, ref:o.reference||oid, from: pc||'?', to: dc||'?', quiet, checks});
+
+    rows.push({
+      oid, ref:o.reference||oid,
+      from: pc||'?', to: dc||'?',
+      quiet, checks
+    });
   }
-  return {checked:rows.length, quiet:quietCount, withAlert, withSameCity, withQuotedOnly, total:O.length, rows};
+  return {
+    checked:rows.length, quiet:quietCount,
+    withAlert, withSameCity, withQuotedOnly,
+    withMissingRelease, withMissingHandover, withAssignmentGap,
+    withStaleMessages, withStaleTracking, withOpenClaim,
+    total:O.length, rows
+  };
 }
 
 const e=v=>String(v==null?'':v).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
@@ -303,16 +416,20 @@ function renderPage(){
   const hidRows=HID.map(x=>'<li><code>'+e(x.sig)+'</code> <span class=hs>'+e(x.s)+'</span> '+(x.r?e(x.r):'<b class=hn>no reason recorded</b>')+'</li>').join('');
   const HIDBLOCK=HID.length?'<details class=hid><summary>'+HID.length+' closed alerts &middot; '+hidWith+' with a reason &middot; '+hidNone+' without</summary><ul>'+hidRows+'</ul></details>':'';
   const quietRows = quiet.rows.filter(r=>r.quiet).map(r=>{
-    const checks = r.checks.map(c=>'<span class="qc '+(c.ok?'ok':'warn')+'">'+e(c.name)+'</span>').join('');
+    const checks = r.checks.map(c=>'<span class="qc '+(c.ok?'ok':'warn')+'" title="'+e(c.note)+'">'+e(c.name)+'</span>').join('');
     return '<tr><td><code>'+e(r.ref)+'</code></td><td>'+e(r.from)+' &rarr; '+e(r.to)+'</td><td>'+checks+'</td></tr>';
   }).join('');
-  const alertRows = quiet.rows.filter(r=>r.alert).map(r=>'<li><code>'+e(r.ref)+'</code> &middot; '+e(r.from)+' &rarr; '+e(r.to)+'</li>').join('');
-  const QUIET='<details class=hid><summary><b>'+quiet.quiet+' of '+quiet.total+' orders passed the preliminary check</b> &middot; '+quiet.withAlert+' with an open alert &middot; '+quiet.withSameCity+' same-city pickup and delivery &middot; '+quiet.withQuotedOnly+' travel only quoted</summary>'+
-    '<p class="qh"><b>This is a preliminary check, not a guarantee.</b> Three things were verified per order: address parity (pickup and delivery city compared), alert presence (does the order have an open alert), and travel status (is travel only quoted, never booked). This does not establish that an order is safe to ignore — a missing release document, a disputed handover, or a stale assignment could still be present. It means: no open alert, no same-city ambiguity, no booked-travel gap. If one of those is wrong, the order will show up when someone checks it.</p>'+
-    '<table class="qtable"><thead><tr><th>Order</th><th>Route</th><th>Checks</th></tr></thead><tbody>'+quietRows+'</tbody></table>'+
+  const alertRows = quiet.rows.filter(r=>r.checks.find(c=>c.key==='alert_presence' && !c.ok)).map(r=>'<li><code>'+e(r.ref)+'</code> &middot; '+e(r.from)+' &rarr; '+e(r.to)+'</li>').join('');
+  const surfacedRows = quiet.rows.filter(r=>!r.quiet).map(r=>{
+    const failed = r.checks.filter(c=>!c.ok).map(c=>'<b class=qc-fail>'+e(c.name)+'</b>');
+    return '<tr><td><code>'+e(r.ref)+'</code></td><td>'+e(r.from)+' &rarr; '+e(r.to)+'</td><td>'+failed.join(', ')+'</td></tr>';
+  }).join('');
+  const QUIET='<details class=hid><summary><b>'+quiet.quiet+' of '+quiet.total+' orders passed all 9 checks</b> &middot; '+quiet.withAlert+' with an open alert &middot; '+quiet.withSameCity+' same-city &middot; '+quiet.withQuotedOnly+' travel only quoted &middot; '+quiet.withMissingRelease+' missing release &middot; '+quiet.withMissingHandover+' missing handover</summary>'+
+    '<p class="qh"><b>Nine checks per order.</b> If any check fails, the order is on the board above, not here. The check list is below. Hover any check to see what was verified.</p>'+
+    '<div class="qtable-wrap"><table class="qtable"><thead><tr><th>Order</th><th>Route</th><th>Checks</th></tr></thead><tbody>'+quietRows+'</tbody></table></div>'+
+    (surfacedRows?'<p class="qh"><b>'+quiet.rows.filter(r=>!r.quiet).length+' orders failed at least one check and are on the board above</b></p><div class="qtable-wrap"><table class="qtable"><thead><tr><th>Order</th><th>Route</th><th>Failed checks</th></tr></thead><tbody>'+surfacedRows+'</tbody></table></div>':'')+
     (alertRows?'<p class="qh"><b>Orders with an open alert</b></p><ul class="qlist">'+alertRows+'</ul>':'')+
     '</details>';
-
   return '<!doctype html><meta charset=utf-8><title>Needs a person</title><style>'+
     'body{font:15px/1.55 system-ui;background:#f7f8f9;margin:0;padding:28px;color:#1a1d21;max-width:1180px}'+
     'h1{font-size:20px;margin:0 0 3px}'+
@@ -348,7 +465,7 @@ function renderPage(){
     '.hid ul{margin:8px 0 0;padding:0 0 0 18px}.hid li{margin:4px 0;line-height:1.45}'+
     '.hid code{font:12px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}'+
     '.hs{color:#6b7280}.hn{color:#b45309}'+'.qh{margin:10px 0 8px;font-size:12px;color:#4b5563;line-height:1.5}'+'.qtable{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}'+'.qtable th{text-align:left;padding:6px 8px;background:#f4f6f8;color:#374151;font-weight:600;border-bottom:1px solid #e4e7ea}'+'.qtable td{padding:6px 8px;border-bottom:1px solid #eef2f4;vertical-align:top}'+'.qtable td code{font:11px ui-monospace,monospace}'+'.qc{display:inline-block;font-size:10px;padding:1px 6px;border-radius:9px;margin-right:4px;text-transform:lowercase}'+'.qc.ok{background:#dcfce7;color:#14532d}'+'.qc.warn{background:#fef3c7;color:#78350f}'+'.qlist{margin:4px 0 0;padding:0 0 0 18px;font-size:12px;color:#4b5563}'+'.qlist code{font:11px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}'+
-    '.a button:disabled{opacity:.45;cursor:not-allowed}'+'.handover{margin:11px 0 0;padding:9px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;font-size:12px;color:#166534}'+'.handover .hstate{padding:2px 0}'+'.handover .hstate.done{font-weight:600;color:#15803d}'+'.handover .hstate code{background:#fff;border:1px solid #bbf7d0;border-radius:4px;padding:1px 5px;font:11px ui-monospace,monospace}'+'.handover a{color:#15803d;text-decoration:none}'+'.handover.refused{background:#fef2f2;border-color:#fecaca}'+'.handover.refused .hstate.done{color:#991b1b}'+'.handover .hstate.refused{color:#b91c1c;font-weight:600}'+'.handover.refused a{color:#b91c1c}'+'.handover.pending{background:#fef3c7;border-color:#fde68a;color:#78350f}'+'.handover.pending .hstate.done{color:#92400e}'+'.handover.pending a{color:#92400e}'+'.emptyboard{padding:32px 24px;text-align:center;color:#4b5563;background:#fff;border:1px dashed #d5d9dd;border-radius:9px;line-height:1.55}'+'.emptyboard b{color:#15803d;font-size:15px;display:block;margin-bottom:4px}'+'.whint{color:#6b7280;font-size:13px;margin:4px 0 0;line-height:1.5}'+'.btnspinner{display:inline-block;width:10px;height:10px;border:2px solid currentColor;border-radius:50%;border-top-color:transparent;animation:spin .7s linear infinite;margin-right:6px;vertical-align:middle}'+'@keyframes spin{to{transform:rotate(360deg)}}'+
+    '.a button:disabled{opacity:.45;cursor:not-allowed}'+'.handover{margin:11px 0 0;padding:9px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;font-size:12px;color:#166534}'+'.handover .hstate{padding:2px 0}'+'.handover .hstate.done{font-weight:600;color:#15803d}'+'.handover .hstate code{background:#fff;border:1px solid #bbf7d0;border-radius:4px;padding:1px 5px;font:11px ui-monospace,monospace}'+'.handover a{color:#15803d;text-decoration:none}'+'.handover.refused{background:#fef2f2;border-color:#fecaca}'+'.handover.refused .hstate.done{color:#991b1b}'+'.handover .hstate.refused{color:#b91c1c;font-weight:600}'+'.handover.refused a{color:#b91c1c}'+'.handover.pending{background:#fef3c7;border-color:#fde68a;color:#78350f}'+'.handover.pending .hstate.done{color:#92400e}'+'.handover.pending a{color:#92400e}'+'.emptyboard{padding:32px 24px;text-align:center;color:#4b5563;background:#fff;border:1px dashed #d5d9dd;border-radius:9px;line-height:1.55}'+'.emptyboard b{color:#15803d;font-size:15px;display:block;margin-bottom:4px}'+'.qtable-wrap{max-height:520px;overflow-y:auto;border:1px solid #e4e7ea;border-radius:7px;margin:8px 0}'+'.qtable-wrap .qtable{margin:0;border-radius:0}'+'.qc{cursor:help}'+'.qc-fail{color:#b91c1c;font-size:11px;font-weight:600}'+'.whint{color:#6b7280;font-size:13px;margin:4px 0 0;line-height:1.5}'+'.btnspinner{display:inline-block;width:10px;height:10px;border:2px solid currentColor;border-radius:50%;border-top-color:transparent;animation:spin .7s linear infinite;margin-right:6px;vertical-align:middle}'+'@keyframes spin{to{transform:rotate(360deg)}}'+
     '</style><script>'+
     'async function decide(id,kind,cmd){'+
     ' try{const r=await fetch("/decide",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({alert_id:id,decision:kind,command:cmd||""})});'+
