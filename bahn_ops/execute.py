@@ -195,10 +195,18 @@ def _classify(command):
 
 
 def find_decision(alert_id):
-    for row in _read_jsonl(DEC):
-        if row.get("alert_id") == alert_id:
-            return row
-    return None
+    """Return the latest decision row for an alert (by `at` timestamp), not the first.
+
+    The old version returned the first matching row. If the operator clicked
+    Change and then Accept, the executor would see the Change, not the Accept.
+    Newest-first is the only correct order for a decision log.
+    """
+    matching = [row for row in _read_jsonl(DEC) if row.get("alert_id") == alert_id]
+    if not matching:
+        return None
+    # Sort by `at` (ISO8601) and return the newest
+    matching.sort(key=lambda r: r.get("at") or "")
+    return matching[-1]
 
 
 def find_proposal(alert_id):
@@ -208,10 +216,21 @@ def find_proposal(alert_id):
     return None
 
 
-def already_executed(alert_id, command):
+def already_executed(alert_id, command, decided_at=None):
+    """Idempotency per (alert, command, decided_at).
+
+    Two different accepted decisions with the same command are different
+    events and must both be recorded. Only a replay of the *same* decision
+    is deduplicated.
+    """
     for row in _read_jsonl(EXE):
-        if row.get("alert_id") == alert_id and row.get("command") == command:
-            return row
+        if row.get("alert_id") != alert_id:
+            continue
+        if row.get("command") != command:
+            continue
+        if decided_at and row.get("decided_at") and row.get("decided_at") != decided_at:
+            continue
+        return row
     return None
 
 
@@ -220,14 +239,35 @@ def execute(alert_id):
     if not decision:
         return {"ok": False, "error": "no decision for " + str(alert_id), "alert_id": alert_id}
 
+    # The executor must independently validate that the operator said 'accept'.
+    # Relying on the HTTP handler to gate this is not enough — a direct
+    # `python3 -m bahn_ops.execute <alert_id>` should also refuse a Change.
+    if decision.get("decision") != "accept":
+        refusal_row = {
+            "alert_id": alert_id,
+            "decision": decision.get("decision"),
+            "command": decision.get("command") or "",
+            "kind": "refused_not_an_acceptance",
+            "status": "REFUSED",
+            "description": "Not executed: the latest decision for this alert is '" + str(decision.get("decision")) + "', not 'accept'. Only an explicit acceptance may run.",
+            "refused_reason": "decision_not_accept",
+            "executed_at": _now(),
+            "decided_at": decision.get("at"),
+        }
+        _append_jsonl(EXE, refusal_row)
+        return {"ok": True, "execution": refusal_row}
+
     command = decision.get("command") or ""
     # If the decision has no command, pull from the proposal
     if not command:
         prop = find_proposal(alert_id) or {}
         command = prop.get("command") or ""
 
-    # Idempotent: if already executed for this alert+command, return that row
-    prior = already_executed(alert_id, command)
+    # Idempotent per (alert, command, decided_at). A replay of the same
+    # acceptance returns the prior row. A different acceptance with the same
+    # command still gets executed.
+    decided_at = decision.get("at")
+    prior = already_executed(alert_id, command, decided_at)
     if prior:
         return {"ok": True, "already_executed": True, "execution": prior}
 
