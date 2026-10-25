@@ -308,24 +308,61 @@ function buildQuiet(){
       return state === 'OPEN' || state === 'PENDING' || state === 'DISPUTED';
     });
 
+    // Three-state checks: pass (evidence exists and is good), fail (evidence
+    // exists and is bad), n/a (no evidence exists and no alert about it).
+    // Only `fail` counts as a problem. `n/a` means "not applicable yet".
+
+    // Release document: fail only if a release document exists but is bad,
+    // or if there's an alert about it. Otherwise n/a.
+    const releaseDocs = docs.filter(d => {
+      const kind = String(d.kind || d.type || d.document_type || '').toLowerCase();
+      return kind.includes('release') || kind.includes('authoris') || kind.includes('authoriz');
+    });
+    const hasReleaseIssue = releaseDocs.some(d => {
+      const state = String(d.state || d.status || d.review_state || '').toLowerCase();
+      return state.includes('missing') || state.includes('reject') || state.includes('expired') || state === 'pending';
+    });
+    const releaseOk = releaseDocs.length > 0 && hasRelease;
+    const releaseCheck = hasReleaseIssue
+      ? { key:'release_document', name:'release document', status:'fail', note:'release document has a problem' }
+      : releaseOk
+      ? { key:'release_document', name:'release document', status:'pass', note:'signed release on file' }
+      : { key:'release_document', name:'release document', status:'n/a', note:'no release document on this order yet' };
+
+    // Handover proof: fail only if there's proof of a bad handover, or an alert
+    // about a missing handover. Otherwise n/a for orders not yet delivered.
+    const handoverProofs = proofs.filter(pr => {
+      const kind = String(pr.kind || pr.type || '').toLowerCase();
+      return kind.includes('handover') || kind.includes('signed');
+    });
+    const handoverEvidence = handoverProofs.length > 0 ||
+      custodyEvents.some(ce => String(ce.event_type || '').toLowerCase().includes('handover'));
+    const delivered = String(o.display_lane || '').toLowerCase() === 'delivered';
+    const handoverCheck = hasHandover
+      ? { key:'handover_proof', name:'handover proof', status:'pass', note:'handover evidence present' }
+      : delivered && !handoverEvidence
+      ? { key:'handover_proof', name:'handover proof', status:'fail', note:'delivered but no handover evidence recorded' }
+      : { key:'handover_proof', name:'handover proof', status:'n/a', note:'order not yet delivered' };
+
     const checks = [
-      { key:'address_parity',     name:'address parity',      ok:!sameCity,        note:sameCity ? 'pickup and delivery are both in '+pc : 'pickup and delivery differ' },
-      { key:'alert_presence',     name:'alert presence',      ok:!hasAlert,        note:hasAlert ? 'open alert on this order' : 'no open alert' },
-      { key:'travel_status',      name:'travel status',       ok:!onlyQuoted,      note:onlyQuoted ? 'travel only quoted, nothing booked' : (booked>0 ? 'travel booked' : 'no travel rows') },
-      { key:'release_document',   name:'release document',    ok:hasRelease,       note:hasRelease ? 'signed release on file' : 'no signed release on file' },
-      { key:'handover_proof',     name:'handover proof',      ok:hasHandover,      note:hasHandover ? 'handover evidence present' : 'no handover evidence recorded' },
-      { key:'assignment_health',  name:'assignment health',   ok:!assignmentGap,   note:assignmentGap ? 'assignment exists but no driver attached' : (hasDriverAssigned ? 'driver assigned' : 'no assignment yet') },
-      { key:'message_freshness',  name:'message freshness',   ok:!staleMessages,   note:staleMessages ? 'last message '+lastMsgDays+' days ago' : (lastMsg ? 'last message '+lastMsgDays+' days ago' : 'no messages') },
-      { key:'tracking_freshness', name:'tracking freshness',  ok:!staleTracking,   note:staleTracking ? 'last tracking '+lastTrkDays+' days ago' : (lastTrk ? 'last tracking '+lastTrkDays+' days ago' : 'no tracking rows') },
-      { key:'condition_claim',    name:'condition claim',     ok:!openClaim,       note:openClaim ? 'open condition claim on this order' : 'no open claim' },
+      { key:'address_parity', name:'address parity', status: sameCity ? 'fail' : 'pass', note: sameCity ? 'pickup and delivery are both in '+pc : 'pickup and delivery differ' },
+      { key:'alert_presence', name:'alert presence', status: hasAlert ? 'fail' : 'pass', note: hasAlert ? 'open alert on this order' : 'no open alert' },
+      { key:'travel_status', name:'travel status', status: onlyQuoted ? 'fail' : 'pass', note: onlyQuoted ? 'travel only quoted, nothing booked' : (booked>0 ? 'travel booked' : 'no travel rows') },
+      releaseCheck,
+      handoverCheck,
+      { key:'assignment_health', name:'assignment health', status: assignmentGap ? 'fail' : 'pass', note: assignmentGap ? 'assignment exists but no driver attached' : (hasDriverAssigned ? 'driver assigned' : 'no assignment yet') },
+      { key:'message_freshness', name:'message freshness', status: staleMessages ? 'fail' : 'pass', note: staleMessages ? 'last message '+lastMsgDays+' days ago' : (lastMsg ? 'last message '+lastMsgDays+' days ago' : 'no messages') },
+      { key:'tracking_freshness', name:'tracking freshness', status: staleTracking ? 'fail' : 'pass', note: staleTracking ? 'last tracking '+lastTrkDays+' days ago' : (lastTrk ? 'last tracking '+lastTrkDays+' days ago' : 'no tracking rows') },
+      { key:'condition_claim', name:'condition claim', status: openClaim ? 'fail' : 'pass', note: openClaim ? 'open condition claim on this order' : 'no open claim' },
     ];
 
-    const quiet = checks.every(c => c.ok);
+    // Quiet = no check fails (n/a and pass both count as not-a-problem)
+    const quiet = checks.every(c => c.status !== 'fail');
     if(hasAlert)withAlert++;
     if(sameCity)withSameCity++;
     if(onlyQuoted)withQuotedOnly++;
-    if(!hasRelease)withMissingRelease++;
-    if(!hasHandover)withMissingHandover++;
+    if(releaseCheck.status === 'fail')withMissingRelease++;
+    if(handoverCheck.status === 'fail')withMissingHandover++;
     if(assignmentGap)withAssignmentGap++;
     if(staleMessages)withStaleMessages++;
     if(staleTracking)withStaleTracking++;
@@ -462,12 +499,15 @@ function renderPage(){
   const hidRows=HID.map(x=>'<li><code>'+e(x.sig)+'</code> <span class=hs>'+e(x.s)+'</span> '+(x.r?e(x.r):'<b class=hn>no reason recorded</b>')+'</li>').join('');
   const HIDBLOCK=HID.length?'<details class=hid><summary>'+HID.length+' closed alerts &middot; '+hidWith+' with a reason &middot; '+hidNone+' without</summary><ul>'+hidRows+'</ul></details>':'';
   const quietRows = quiet.rows.filter(r=>r.quiet).map(r=>{
-    const checks = r.checks.map(c=>'<span class="qc '+(c.ok?'ok':'warn')+'" title="'+e(c.note)+'">'+e(c.name)+'</span>').join('');
+    const checks = r.checks.map(c=>{
+      const cls = c.status === 'fail' ? 'fail' : c.status === 'n/a' ? 'na' : 'ok';
+      return '<span class="qc '+cls+'" title="'+e(c.note)+'">'+e(c.name)+'</span>';
+    }).join('');
     return '<tr><td><code>'+e(r.ref)+'</code></td><td>'+e(r.from)+' &rarr; '+e(r.to)+'</td><td>'+checks+'</td></tr>';
   }).join('');
   const alertRows = quiet.rows.filter(r=>r.checks.find(c=>c.key==='alert_presence' && !c.ok)).map(r=>'<li><code>'+e(r.ref)+'</code> &middot; '+e(r.from)+' &rarr; '+e(r.to)+'</li>').join('');
   const surfacedRows = quiet.rows.filter(r=>!r.quiet).map(r=>{
-    const failed = r.checks.filter(c=>!c.ok).map(c=>'<b class=qc-fail>'+e(c.name)+'</b>');
+    const failed = r.checks.filter(c=>c.status === 'fail').map(c=>'<b class=qc-fail>'+e(c.name)+'</b>');
     return '<tr><td><code>'+e(r.ref)+'</code></td><td>'+e(r.from)+' &rarr; '+e(r.to)+'</td><td>'+failed.join(', ')+'</td></tr>';
   }).join('');
   const QUIET='<details class=hid><summary><b>'+quiet.quiet+' of '+quiet.total+' orders passed all 9 automated checks</b> &middot; '+quiet.withAlert+' with an open alert &middot; '+quiet.withSameCity+' same-city &middot; '+quiet.withQuotedOnly+' travel only quoted &middot; '+quiet.withMissingRelease+' missing release &middot; '+quiet.withMissingHandover+' missing handover</summary>'+
@@ -510,7 +550,7 @@ function renderPage(){
     '.hid summary{cursor:pointer;padding:8px 12px;background:#fff;border:1px solid #e4e7ea;border-radius:7px}'+
     '.hid ul{margin:8px 0 0;padding:0 0 0 18px}.hid li{margin:4px 0;line-height:1.45}'+
     '.hid code{font:12px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}'+
-    '.hs{color:#6b7280}.hn{color:#b45309}'+'.qh{margin:10px 0 8px;font-size:12px;color:#4b5563;line-height:1.5}'+'.qtable{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}'+'.qtable th{text-align:left;padding:6px 8px;background:#f4f6f8;color:#374151;font-weight:600;border-bottom:1px solid #e4e7ea}'+'.qtable td{padding:6px 8px;border-bottom:1px solid #eef2f4;vertical-align:top}'+'.qtable td code{font:11px ui-monospace,monospace}'+'.qc{display:inline-block;font-size:10px;padding:1px 6px;border-radius:9px;margin-right:4px;text-transform:lowercase}'+'.qc.ok{background:#dcfce7;color:#14532d}'+'.qc.warn{background:#fef3c7;color:#78350f}'+'.qlist{margin:4px 0 0;padding:0 0 0 18px;font-size:12px;color:#4b5563}'+'.qlist code{font:11px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}'+
+    '.hs{color:#6b7280}.hn{color:#b45309}'+'.qh{margin:10px 0 8px;font-size:12px;color:#4b5563;line-height:1.5}'+'.qtable{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}'+'.qtable th{text-align:left;padding:6px 8px;background:#f4f6f8;color:#374151;font-weight:600;border-bottom:1px solid #e4e7ea}'+'.qtable td{padding:6px 8px;border-bottom:1px solid #eef2f4;vertical-align:top}'+'.qtable td code{font:11px ui-monospace,monospace}'+'.qc{display:inline-block;font-size:10px;padding:1px 6px;border-radius:9px;margin-right:4px;text-transform:lowercase}'+'.qc.ok{background:#dcfce7;color:#14532d}'+'.qc.warn{background:#fef3c7;color:#78350f}'+'.qc.na{background:#f4f6f8;color:#9ca3af;border:1px solid #e4e7ea}'+'.qc.fail{background:#fee2e2;color:#991b1b}'+'.qlist{margin:4px 0 0;padding:0 0 0 18px;font-size:12px;color:#4b5563}'+'.qlist code{font:11px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}'+
     '.a button:disabled{opacity:.45;cursor:not-allowed}'+'.handover{margin:11px 0 0;padding:9px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;font-size:12px;color:#166534}'+'.handover .hstate{padding:2px 0}'+'.handover .hstate.done{font-weight:600;color:#15803d}'+'.handover .hstate code{background:#fff;border:1px solid #bbf7d0;border-radius:4px;padding:1px 5px;font:11px ui-monospace,monospace}'+'.handover a{color:#15803d;text-decoration:none}'+'.handover.refused{background:#fef2f2;border-color:#fecaca}'+'.handover.refused .hstate.done{color:#991b1b}'+'.handover .hstate.refused{color:#b91c1c;font-weight:600}'+'.handover.refused a{color:#b91c1c}'+'.handover.pending{background:#fef3c7;border-color:#fde68a;color:#78350f}'+'.handover.pending .hstate.done{color:#92400e}'+'.handover.pending a{color:#92400e}'+'.emptyboard{padding:32px 24px;text-align:center;color:#4b5563;background:#fff;border:1px dashed #d5d9dd;border-radius:9px;line-height:1.55}'+'.emptyboard b{color:#15803d;font-size:15px;display:block;margin-bottom:4px}'+'.qtable-wrap{max-height:520px;overflow-y:auto;border:1px solid #e4e7ea;border-radius:7px;margin:8px 0}'+'.qtable-wrap .qtable{margin:0;border-radius:0}'+'.qc{cursor:help}'+'.qc-fail{color:#b91c1c;font-size:11px;font-weight:600}'+'.chip.ack{background:#fef3c7;border-color:#fde68a;color:#92400e;font-weight:600}'+'.whint{color:#6b7280;font-size:13px;margin:4px 0 0;line-height:1.5}'+'.btnspinner{display:inline-block;width:10px;height:10px;border:2px solid currentColor;border-radius:50%;border-top-color:transparent;animation:spin .7s linear infinite;margin-right:6px;vertical-align:middle}'+'@keyframes spin{to{transform:rotate(360deg)}}'+
     '</style><script>'+
     'async function decide(id,kind,cmd){'+
