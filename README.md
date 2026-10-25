@@ -45,6 +45,17 @@ still there.
 
 ## Try it — the 60-second demo
 
+**The fastest way to see the agent work.** On a fresh clone the board has 18 open and acknowledged cases, none investigated yet. One button:
+
+1. Run `node board/server.cjs`, open <http://127.0.0.1:4317>.
+2. Click **Run the agent on the N waiting cases.**
+3. The counter shows the agent working through each case — reading the order, reading the messages, asking the driver, checking the ferry, then handing back one decision.
+4. When it finishes (~60 seconds for 18 cases), the board shows: N proposals ready for your call, M stopped because the evidence doesn't support an action, and the counter's last line says `0 waiting`.
+
+**On a real shift**, set `BAHN_AUTORUN=1` and the agent runs at startup. By the time ops opens the room, the work is already done. The board opens with proposals ready to approve, not with 18 empty cards.
+
+
+
 The scene the brief describes (deck page 5): a driver stops with a warning light, the agent asks three questions, then hands the person one decision. You can reproduce it on any open alert.
 
 1. Run `node board/server.cjs` and open <http://127.0.0.1:4317>. Click **Open case →** on any card.
