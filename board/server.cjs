@@ -133,23 +133,28 @@ const _all=(()=>{
 })();
 const live=_all;
 // Rebuilt per request — do NOT freeze at startup
-function buildProposalIndexes(){
-  const oursExists = f.existsSync(OURS);
-  const source = oursExists ? P.filter(q=>!q.superseded_by_proposal_id&&!q.superseded_at) : P;
-  const pa = {}, po = {};
-  for(const q of source){
-    if(q.alert_id) pa[q.alert_id]=q;
-    if(q.order_id) po[q.order_id]=q;
-  }
-  return {pa, po};
+function readOurs(){
+  try{
+    if(!f.existsSync(OURS))return[];
+    return f.readFileSync(OURS,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean)
+      .map(q=>Object.assign({},q,{created_at:q.created_at||q.generated_at}));
+  }catch(e){return[]}
 }
-
+function buildProposalIndexes(){
+  const pa={},po={};
+  for(const q of readOurs()){
+    if(q.superseded_by_proposal_id||q.superseded_at)continue;
+    if(q.alert_id)pa[q.alert_id]=q;
+    if(q.order_id)po[q.order_id]=q;
+  }
+  return {pa,po};
+}
 
 const S={critical:0,high:1,medium:2,low:3};
 
 function buildCard(a, pa, po){
   const o=OM[a.order_id]||{};
-  const q=(pa && pa[a.id]) || (po && po[a.order_id]) || {};
+  const q=(pa && pa[a.id]) || {};
   const hasProposal=!!(q.summary || q.stops_because);
   const decForAlert = (()=>{ try{ for(const x of LD()){ if(x.alert_id===a.id) return x } }catch(e){} return null })();
   return {
@@ -170,7 +175,7 @@ function buildCard(a, pa, po){
     fs:q.fact_state||'',
     sb:q.stops_because||'',
     aid:a.id||'',
-    cmd:q.command||'',
+    cmd:String(q.command||'').replace(/[^A-Za-z0-9._-]/g,''),
     me:q.model_error||'',
     hasProposal:hasProposal,
     wi:(()=>{const w=WI.find(x=>x.order_id===o.id);return w?{due:w.due_at||'',kind:w.kind||'',owner:w.owner||'',next:w.next_action||''}:null})(),
@@ -386,6 +391,20 @@ function buildQuiet(){
 
 const e=v=>String(v==null?'':v).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 
+function cmdInfo(cmd){
+  const c=String(cmd||'').toLowerCase();
+  const parts=c.split('.').filter(Boolean);
+  const action=(parts.length>1?parts.slice(1).join(' '):(parts[0]||'review the case')).replace(/_/g,' ');
+  const label=action.charAt(0).toUpperCase()+action.slice(1)+(parts.length>1?' ('+parts[0]+')':'');
+  let touches='records your decision only';
+  if(/rebook|book|ferry|hotel|ticket|reroute|re-route/.test(c)&&!/verify/.test(c))touches='may change a booking or add cost. Nothing is booked until you confirm';
+  else if(/customer|dealer/.test(c))touches='involves the customer or dealer. Drafted for you to send, the agent never contacts them';
+  else if(/driver/.test(c))touches='asks the driver (allowed). No booking, date or cost changes';
+  else if(/date|promise|window|reschedul/.test(c))touches='moves a promised date. Needs your approval';
+  else if(/verify|compare|review|check|request/.test(c))touches='asks for or compares evidence. No booking, date or cost changes';
+  else if(c==='alert.resolve')touches='closes the alert. Nothing else changes';
+  return {label:label,touches:touches};
+}
 function renderCard(r){
   const triggered = String(r.w||'').slice(0,19).replace('T',' ');
   const isAck = r.status === 'ACKNOWLEDGED';
@@ -402,7 +421,7 @@ function renderCard(r){
     (isAck?'<span class="chip ack" title="Someone owns this case, but the recovery is not done">acknowledged</span>':'')+
     '</div>';
   const caseLink='<a class=caselink href="/case/'+encodeURIComponent(r.aid)+'">Open case &rarr;</a>';
-  const header='<div class=h><b>'+e(r.r)+'</b><span>'+e(r.f)+' &rarr; '+e(r.t)+'</span><small>'+e(r.s)+'</small></div>';
+  const header='<div class=h><b>'+e(r.r)+'</b><span>'+e(r.f)+' &rarr; '+e(r.t)+'</span><small class="sev-'+e(String(r.s).toLowerCase())+'">'+e(r.s)+'</small></div>';
   const what = r.human
     ? '<p class=w>'+e(r.human.opener)+'</p><p class=whint>'+e(r.human.hint)+'</p>'
     : '<p class=w>'+e(r.y)+'</p>';
@@ -410,20 +429,20 @@ function renderCard(r){
   if(r.sb){
     return '<div class=c data-aid="'+e(r.aid)+'">'+header+what+chips+
       '<div class=stop><b>Not ready for action</b> '+e(r.sb)+'</div>'+
-      '<div class=a><span class=dslot></span><button onclick="decide(\''+e(r.aid)+'\',\'change\',\''+e(r.cmd||'')+'\')">Change</button>'+caseLink+'</div>'+
+      '<div class=a><span class=dslot></span><button onclick="decide(\''+e(r.aid)+'\',\'change\',\''+e(r.cmd||'')+'\')">Choose another step</button>'+caseLink+'</div>'+
       handoverStrip(r)+'</div>';
   }
 
   if(r.g){
-    const effect='<div class=effect><b>If you accept</b>, this runs: <code>'+e(r.cmd||'alert.resolve')+'</code> on '+e(r.r)+' &middot; no customer is contacted &middot; needs your approval</div>';
+    const info=cmdInfo(r.cmd);const effect='<div class=effect><b>If you approve:</b> '+e(info.label)+' on '+e(r.r)+' &middot; '+e(info.touches)+'</div>';
     return '<div class=c data-aid="'+e(r.aid)+'">'+header+what+chips+
       '<div class=g><div class=gh>The agent suggests</div><p>'+e(r.g)+'</p>'+
       (r.ra?'<p class=gr><b>Because</b> '+e(r.ra)+'</p>':'')+
       (r.oevFirst?'<p class=ge>from <code>'+e(r.oevFirst)+'</code>'+(r.oev>1?' and '+(r.oev-1)+' more':'')+'</p>':'')+
       '</div>'+effect+
       '<div class=a><span class=dslot></span>'+
-      '<button class="act-accept" onclick="decide(\''+e(r.aid)+'\',\'accept\',\''+e(r.cmd||'')+'\')">Accept</button>'+
-      '<button class="act-change" onclick="decide(\''+e(r.aid)+'\',\'change\',\''+e(r.cmd||'')+'\')">Change</button>'+
+      '<button class="act-accept" onclick="decide(\''+e(r.aid)+'\',\'accept\',\''+e(r.cmd||'')+'\')">Approve: '+e(cmdInfo(r.cmd).label)+'</button>'+
+      '<button class="act-change" onclick="decide(\''+e(r.aid)+'\',\'change\',\''+e(r.cmd||'')+'\')">Choose another step</button>'+
       caseLink+'</div>'+
       handoverStrip(r)+'</div>';
   }
@@ -433,7 +452,7 @@ function renderCard(r){
     'Click below to run it on just this alert.</div>'+
     '<div class=a><span class=dslot></span>'+
     '<button class=runagent onclick="runAgent(\''+e(r.aid)+'\')">Run agent on this case</button>'+
-    '<button class="act-change" onclick="decide(\''+e(r.aid)+'\',\'change\',\'\')">Change</button>'+
+    '<button class="act-change" onclick="decide(\''+e(r.aid)+'\',\'change\',\'\')">Choose another step</button>'+
     caseLink+'</div></div>';
 }
 
@@ -562,9 +581,9 @@ function renderPage(){
     '.hid ul{margin:8px 0 0;padding:0 0 0 18px}.hid li{margin:4px 0;line-height:1.45}'+
     '.hid code{font:12px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}'+
     '.hs{color:#6b7280}.hn{color:#b45309}'+'.qh{margin:10px 0 8px;font-size:12px;color:#4b5563;line-height:1.5}'+'.qtable{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}'+'.qtable th{text-align:left;padding:6px 8px;background:#f4f6f8;color:#374151;font-weight:600;border-bottom:1px solid #e4e7ea}'+'.qtable td{padding:6px 8px;border-bottom:1px solid #eef2f4;vertical-align:top}'+'.qtable td code{font:11px ui-monospace,monospace}'+'.qc{display:inline-block;font-size:10px;padding:1px 6px;border-radius:9px;margin-right:4px;text-transform:lowercase}'+'.qc.ok{background:#dcfce7;color:#14532d}'+'.qc.warn{background:#fef3c7;color:#78350f}'+'.qc.na{background:#f4f6f8;color:#9ca3af;border:1px solid #e4e7ea}'+'.qc.fail{background:#fee2e2;color:#991b1b}'+'.qlist{margin:4px 0 0;padding:0 0 0 18px;font-size:12px;color:#4b5563}'+'.qlist code{font:11px ui-monospace,monospace;background:#f4f6f8;padding:1px 5px;border-radius:4px}'+
-    '.a button:disabled{opacity:.45;cursor:not-allowed}'+'.handover{margin:11px 0 0;padding:9px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;font-size:12px;color:#166534}'+'.handover .hstate{padding:2px 0}'+'.handover .hstate.done{font-weight:600;color:#15803d}'+'.handover .hstate code{background:#fff;border:1px solid #bbf7d0;border-radius:4px;padding:1px 5px;font:11px ui-monospace,monospace}'+'.handover a{color:#15803d;text-decoration:none}'+'.handover.refused{background:#fef2f2;border-color:#fecaca}'+'.handover.refused .hstate.done{color:#991b1b}'+'.handover .hstate.refused{color:#b91c1c;font-weight:600}'+'.handover.refused a{color:#b91c1c}'+'.handover.pending{background:#fef3c7;border-color:#fde68a;color:#78350f}'+'.handover.pending .hstate.done{color:#92400e}'+'.handover.pending a{color:#92400e}'+'.emptyboard{padding:32px 24px;text-align:center;color:#4b5563;background:#fff;border:1px dashed #d5d9dd;border-radius:9px;line-height:1.55}'+'.emptyboard b{color:#15803d;font-size:15px;display:block;margin-bottom:4px}'+'.qtable-wrap{max-height:520px;overflow-y:auto;border:1px solid #e4e7ea;border-radius:7px;margin:8px 0}'+'.qtable-wrap .qtable{margin:0;border-radius:0}'+'.qc{cursor:help}'+'.qc-fail{color:#b91c1c;font-size:11px;font-weight:600}'+'.chip.ack{background:#fef3c7;border-color:#fde68a;color:#92400e;font-weight:600}'+'.whint{color:#6b7280;font-size:13px;margin:4px 0 0;line-height:1.5}'+'.btnspinner{display:inline-block;width:10px;height:10px;border:2px solid currentColor;border-radius:50%;border-top-color:transparent;animation:spin .7s linear infinite;margin-right:6px;vertical-align:middle}'+'@keyframes spin{to{transform:rotate(360deg)}}'+
+    '.a button:disabled{opacity:.45;cursor:not-allowed}'+'.handover{margin:11px 0 0;padding:9px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;font-size:12px;color:#166534}'+'.handover .hstate{padding:2px 0}'+'.handover .hstate.done{font-weight:600;color:#15803d}'+'.handover .hstate code{background:#fff;border:1px solid #bbf7d0;border-radius:4px;padding:1px 5px;font:11px ui-monospace,monospace}'+'.handover a{color:#15803d;text-decoration:none}'+'.handover.refused{background:#fef2f2;border-color:#fecaca}'+'.handover.refused .hstate.done{color:#991b1b}'+'.handover .hstate.refused{color:#b91c1c;font-weight:600}'+'.handover.refused a{color:#b91c1c}'+'.handover.pending{background:#fef3c7;border-color:#fde68a;color:#78350f}'+'.handover.pending .hstate.done{color:#92400e}'+'.handover.pending a{color:#92400e}'+'.emptyboard{padding:32px 24px;text-align:center;color:#4b5563;background:#fff;border:1px dashed #d5d9dd;border-radius:9px;line-height:1.55}'+'.emptyboard b{color:#15803d;font-size:15px;display:block;margin-bottom:4px}'+'.qtable-wrap{max-height:520px;overflow-y:auto;border:1px solid #e4e7ea;border-radius:7px;margin:8px 0}'+'.qtable-wrap .qtable{margin:0;border-radius:0}'+'.qc{cursor:help}'+'.sev-critical{color:#b91c1c!important;font-weight:700}.c.sel{outline:2px solid #1d4ed8}'+'.qc-fail{color:#b91c1c;font-size:11px;font-weight:600}'+'.chip.ack{background:#fef3c7;border-color:#fde68a;color:#92400e;font-weight:600}'+'.whint{color:#6b7280;font-size:13px;margin:4px 0 0;line-height:1.5}'+'.btnspinner{display:inline-block;width:10px;height:10px;border:2px solid currentColor;border-radius:50%;border-top-color:transparent;animation:spin .7s linear infinite;margin-right:6px;vertical-align:middle}'+'@keyframes spin{to{transform:rotate(360deg)}}'+
     '</style><script>'+
-    'async function decide(id,kind,cmd){'+
+    'async function decide(id,kind,cmd){if(kind=="change"){location.href="/case/"+encodeURIComponent(id)+"#talk";return}'+
     ' try{const r=await fetch("/decide",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({alert_id:id,decision:kind,command:cmd||""})});'+
     ' const j=await r.json();if(j.ok){loadDecisions()}else{alert("could not record: "+(j.error||"unknown"))}}catch(e){alert("could not record: "+e.message)}}'+
     'async function runAgent(id){'+
@@ -575,7 +594,7 @@ function renderPage(){
     'async function loadDecisions(){try{const r=await fetch("/decisions");const d=await r.json();const by={};for(const x of d)by[x.alert_id]=x;'+
     ' for(const el of document.querySelectorAll("[data-aid]")){const dec=by[el.getAttribute("data-aid")];const slot=el.querySelector(".dslot");if(!slot)continue;'+
     ' if(dec){slot.innerHTML="<span class=chip dc>"+dec.decision+" "+dec.at.slice(11,16)+"</span>";el.querySelectorAll(".act-accept,.act-change").forEach(b=>b.style.display="none")}}}catch(e){}}'+
-    'document.addEventListener("DOMContentLoaded",loadDecisions);'+
+    'document.addEventListener("DOMContentLoaded",loadDecisions);'+'document.addEventListener("keydown",ev=>{const tn=ev.target.tagName;if(tn=="INPUT"||tn=="TEXTAREA")return;const cards=[...document.querySelectorAll(".c")];if(!cards.length)return;let i=cards.findIndex(c=>c.classList.contains("sel"));if(ev.key=="j"||ev.key=="k"){ev.preventDefault();if(i>=0)cards[i].classList.remove("sel");i=ev.key=="j"?Math.min(cards.length-1,i+1):Math.max(0,i<0?0:i-1);cards[i].classList.add("sel");cards[i].scrollIntoView({block:"center"})}if(ev.key=="Enter"&&i>=0){const l=cards[i].querySelector(".caselink");if(l)location.href=l.href}});'+
     '</script>'+
     '<h1>Needs a person</h1><p style="margin:0 0 22px;font-size:13px"><a href="/phone" style="color:#6b7280;text-decoration:none">Phone log &rarr;</a></p>'+
     '<p class=m><b>'+proposed+'</b> ready for your call &middot; <b>'+stopped+'</b> that need more evidence'+
@@ -792,6 +811,10 @@ h.createServer((q,s)=>{
         return s.end(JSON.stringify({ok:false,error:'No current proposal exists for this alert'}));
       }
       const verifiedCommand = String(proposal.command || '').trim();
+      if(d.decision === 'accept' && (proposal.stop_enforced || String(proposal.stops_because||'').trim())){
+        s.writeHead(409,{'content-type':'application/json'});
+        return s.end(JSON.stringify({ok:false,error:'The agent stopped on this case: '+String(proposal.stops_because||'the evidence is insufficient')}));
+      }
       if(d.decision === 'accept' && !verifiedCommand){
         s.writeHead(409,{'content-type':'application/json'});
         return s.end(JSON.stringify({ok:false,error:'Cannot accept a proposal with no command'}));
