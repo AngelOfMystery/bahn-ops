@@ -437,11 +437,29 @@ def run_case(alert_id):
         "mode": "deterministic",
     }
     if refusal:
-        record["turns"].append(deterministic_turn(ctx))
-        record["driver_replies"] = ctx["driver_replies"]
+        # The refusal means "do not propose a write." It does NOT mean
+        # "do not investigate." Run the read+ask loop with the model if
+        # available; fall back to a deterministic ask otherwise.
+        read_tools = [t for t in tool_definitions() if t["name"] in ("get_order", "get_messages", "get_reservations", "ask_driver", "lookup_ferry_status")]
+        record["tools"] = [t["name"] for t in read_tools]
+        if read_tools:
+            messages = [_system_message(alert, order, refusal)]
+            messages.append({"role": "user", "content": (
+                "Investigate this case and report what you find. "
+                "Read the order, messages, reservations. Ask the driver through ask_driver "
+                "if any fact is missing. Do NOT propose an action — the case is on hold. "
+                "Your job is to explain what is missing and what would unblock it."
+            )})
+            proposed = _run_loop(messages, read_tools, ctx, record)
+            record["driver_replies"] = ctx["driver_replies"]
+            if not record["turns"]:
+                record["turns"].append(deterministic_turn(ctx))
+                record["mode"] = "deterministic"
+        else:
+            record["turns"].append(deterministic_turn(ctx))
         record["proposal"] = record["turns"][-1]
         if not load_history(alert_id):
-            save_history(alert_id, [{"role": "agent", "at": record["generated_at"], "turn": record["turns"][-1]}])
+            save_history(alert_id, [{"role": "agent", "at": record["generated_at"], "turn": t} for t in record["turns"]])
         return record
 
     tools = tool_definitions()
