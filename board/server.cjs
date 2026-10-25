@@ -215,178 +215,164 @@ const HID=A.filter(a=>a.status!=='OPEN' && a.status!=='ACKNOWLEDGED').map(a=>({
 const ACK_COUNT = A.filter(a=>a.status==='ACKNOWLEDGED').length;
 
 function buildQuiet(){
-  const alerted={};
-  for(const a of A)if(a.status==='OPEN')alerted[a.order_id]=true;
-
-  // Group helper: rows indexed by order_id
-  const byOrder = (arr) => {
-    const m = {};
+  const grp=(arr)=>{const m={};for(const r of arr){if(r.order_id){(m[r.order_id]=m[r.order_id]||[]).push(r)}}return m};
+  const NOTES=L('order_notes');
+  const resBy=grp(RES),docBy=grp(DOCS),prfBy=grp(PROOFS),msgBy=grp(MSGS),trkBy=grp(TRACK),incBy=grp(INCIDENTS),asgBy=grp(ASSIGN),cusBy=grp(CUSTODY),notesBy=grp(NOTES);
+  const ms=v=>{const t=Date.parse(v);return isNaN(t)?null:t};
+  let snap=0;
+  for(const arr of [MSGS,TRACK,A]){
     for(const r of arr){
-      const oid = r.order_id;
-      if(oid){ if(!m[oid]) m[oid]=[]; m[oid].push(r); }
-    }
-    return m;
-  };
-
-  const resByOrder = byOrder(RES);
-  const docsByOrder = byOrder(DOCS);
-  const proofsByOrder = byOrder(PROOFS);
-  const msgsByOrder = byOrder(MSGS);
-  const trackByOrder = byOrder(TRACK);
-  const incByOrder = byOrder(INCIDENTS);
-  const assignByOrder = byOrder(ASSIGN);
-  const custodyByOrder = byOrder(CUSTODY);
-
-  // Most recent date in an array of rows, reading a few common date fields
-  const newestDate = (rows, fields) => {
-    let best = null;
-    for(const r of rows||[]){
-      for(const f of fields){
-        const v = r[f];
-        if(v && (best===null || v > best)) best = v;
+      for(const k of ['authored_at','observed_at','triggered_at','received_at']){
+        const t=ms(r[k]); if(t&&t>snap)snap=t;
       }
     }
-    return best;
-  };
+  }
+  if(!snap)snap=Date.now();
+  const hrs=v=>{const t=ms(v);return t==null?null:Math.round((snap-t)/3600000)};
+  const U=v=>String(v==null?'':v).toUpperCase();
+  const norm=t=>' '+String(t).toLowerCase().replace(/[^a-z0-9äöüåéèñ]/g,' ')+' ';
 
-  const now = new Date('2026-10-24T22:00:00Z');  // snapshot clock (dataset is fixed)
-  const daysAgo = (iso) => {
-    if(!iso) return null;
-    const t = new Date(iso);
-    if(isNaN(t)) return null;
-    return Math.floor((now - t) / (1000*60*60*24));
-  };
+  const alerted={};
+  for(const a of A)if(a.status==='OPEN'||a.status==='ACKNOWLEDGED')alerted[a.order_id]=true;
+
+  const cities=[...new Set(D.map(a=>String(a.city||a.locality||a.town||'').trim()).filter(c=>c.length>=4))];
 
   const rows=[];
-  let withAlert=0, quietCount=0, withSameCity=0, withQuotedOnly=0;
-  let withMissingRelease=0, withMissingHandover=0, withAssignmentGap=0;
-  let withStaleMessages=0, withStaleTracking=0, withOpenClaim=0;
+  let quietCount=0, alertedCount=0, flaggedCount=0;
 
   for(const o of O){
-    const oid = o.id;
-    const pc = city(o.pickup_address_id);
-    const dc = city(o.delivery_address_id);
-    const sameCity = !!(pc && dc && pc.toLowerCase()===dc.toLowerCase());
-    const hasAlert = !!alerted[oid];
+    const oid=o.id;
+    const pc=city(o.pickup_address_id);
+    const dc=city(o.delivery_address_id);
 
-    const res = resByOrder[oid] || [];
-    const quoted = res.filter(x=>String(x.status||'').toUpperCase()==='QUOTED').length;
-    const booked = res.filter(x=>String(x.status||'').toUpperCase()==='BOOKED').length;
-    const onlyQuoted = quoted > 0 && booked === 0;
+    const asg=asgBy[oid]||[];
+    const delivered=asg.some(a=>U(a.status)==='COMPLETED') && !asg.some(a=>U(a.status)==='IN_PROGRESS'||U(a.status)==='ASSIGNED');
+    const active=asg.some(a=>U(a.status)==='IN_PROGRESS');
+    const moving=active||delivered;
 
-    // 4. Release document — is a signed release present on file?
-    const docs = docsByOrder[oid] || [];
-    const hasRelease = docs.some(d => {
-      const kind = String(d.kind || d.type || '').toLowerCase();
-      const state = String(d.state || d.status || '').toLowerCase();
-      return (kind.includes('release') || kind.includes('authoris') || kind.includes('authoriz')) &&
-             (state.includes('sign') || state.includes('approv') || state.includes('on_file'));
-    });
+    const checks=[];
+    const add=(key,name,state,note)=>checks.push({key,name,state,ok:state!=='fail',note});
 
-    // 5. Handover proof — was the car actually handed over?
-    const proofs = proofsByOrder[oid] || [];
-    const custodyEvents = custodyByOrder[oid] || [];
-    const hasHandover = proofs.some(pr => String(pr.kind || pr.type || '').toLowerCase().includes('handover')) ||
-                        custodyEvents.some(ce => String(ce.event_type || '').toLowerCase().includes('handover'));
+    // 1. address vs notes (Tampere/Helsinki trap)
+    const notes=notesBy[oid]||[];
+    const msgs=msgBy[oid]||[];
+    const texts=[];
+    for(const n of notes)texts.push(String(n.body||''));
+    for(const m of msgs)if(['customer','site_contact','handoff_contact'].includes(m.author_type))texts.push(String(m.body||''));
+    const knownCities=[pc,dc].map(x=>String(x||'').toLowerCase());
+    let conflict=null;
+    for(const t of texts){
+      for(const sent of String(t).split(/[.\n;]/)){
+        const low=norm(sent);
+        if(!/(deliver|drop|destination|address|hand.?over|receiv|pickup|pick up|collect)/.test(low))continue;
+        for(const c of cities){
+          const cl=c.toLowerCase();
+          if(knownCities.includes(cl))continue;
+          if(low.includes(' '+cl.replace(/[^a-z0-9äöüåéèñ]/g,' ')+' ')){conflict={c:c,s:sent.trim().slice(0,80)};break}
+        }
+        if(conflict)break;
+      }
+      if(conflict)break;
+    }
+    if(conflict)add('address','address vs notes','fail','a note mentions '+conflict.c+' but addresses say '+(pc||'?')+' → '+(dc||'?'));
+    else add('address','address vs notes','ok','notes agree with addresses');
 
-    // 6. Assignment health — driver assigned, no gap between steps
-    const asg = assignByOrder[oid] || [];
-    const hasDriverAssigned = asg.length > 0 && asg.some(a => !!a.driver_id);
-    const assignmentGap = asg.length > 0 && !hasDriverAssigned;
+    // 2. alert presence
+    const hasAlert=!!alerted[oid];
+    if(hasAlert)add('alert','alert presence','fail','has an open or acknowledged alert');
+    else add('alert','alert presence','ok','no open or acknowledged alert');
 
-    // 7. Message freshness — last message within 7 days
-    const msgs = msgsByOrder[oid] || [];
-    const lastMsg = newestDate(msgs, ['authored_at','created_at','sent_at']);
-    const lastMsgDays = daysAgo(lastMsg);
-    const staleMessages = msgs.length > 0 && lastMsgDays !== null && lastMsgDays > 7;
+    // 3. travel risk — real fields: MISSED_CHECK_IN, snapshot_journey_state UNVERIFIED/REJECTED
+    const res=resBy[oid]||[];
+    const travelProblems=[];
+    for(const r of res){
+      const st=U(r.status);
+      const js=U(r.snapshot_journey_state);
+      const lab=String(r.route_label||r.kind||'travel');
+      if(st==='MISSED_CHECK_IN')travelProblems.push(lab+': missed check-in');
+      else if(js.includes('UNVERIFIED'))travelProblems.push(lab+': booked, use not verified');
+      else if(js.includes('REJECTED')&&!js.includes('REBOOKED'))travelProblems.push(lab+': check-in rejected');
+    }
+    if(!res.length)add('travel','travel','na','no travel booked for this order');
+    else if(travelProblems.length)add('travel','travel','fail',travelProblems.join('; '));
+    else add('travel','travel','ok',res.length+' reservation(s) fine');
 
-    // 8. Tracking freshness — last tracking observation within 3 days
-    const trk = trackByOrder[oid] || [];
-    const lastTrk = newestDate(trk, ['observed_at','recorded_at','created_at']);
-    const lastTrkDays = daysAgo(lastTrk);
-    const staleTracking = trk.length > 0 && lastTrkDays !== null && lastTrkDays > 3;
+    // 4. paperwork — RELEASE_AUTHORITY only matters when moving
+    const docs=docBy[oid]||[];
+    const paperProblems=[];
+    for(const d of docs){
+      const kind=U(d.kind);
+      const st=U(d.status);
+      if(kind==='RELEASE_AUTHORITY'&&['MISSING','REQUESTED'].includes(st)&&moving){
+        paperProblems.push('release authority is '+st.toLowerCase()+' but car is '+(delivered?'delivered':'moving'));
+      }
+      if(kind==='CMR'&&st==='MISSING'&&moving)paperProblems.push('CMR missing');
+    }
+    if(!docs.length)add('paperwork','paperwork','na','no documents on file');
+    else if(paperProblems.length)add('paperwork','paperwork','fail',paperProblems.join('; '));
+    else add('paperwork','paperwork','ok',docs.length+' document(s) fine');
 
-    // 9. Condition claim — any open incident/claim
-    const inc = incByOrder[oid] || [];
-    const openClaim = inc.some(i => {
-      const state = String(i.status || i.state || '').toUpperCase();
-      return state === 'OPEN' || state === 'PENDING' || state === 'DISPUTED';
-    });
+    // 5. handover — only when delivered
+    const prf=prfBy[oid]||[];
+    const dphoto=prf.filter(x=>U(x.kind)==='DELIVERY_PHOTOS');
+    const signedHandover=docs.some(d=>U(d.kind)==='SIGNED_HANDOVER'&&['SIGNED','VERIFIED'].includes(U(d.status)));
+    const deliveryPhotosOk=dphoto.length>0&&dphoto.every(x=>['APPROVED','SUBMITTED'].includes(U(x.status)));
+    const rejectedProofs=prf.filter(x=>U(x.status)==='REJECTED');
+    const requiredProofs=prf.filter(x=>U(x.status)==='REQUIRED');
+    if(!delivered)add('handover','handover','na','not delivered yet, nothing expected');
+    else if(rejectedProofs.length)add('handover','handover','fail',rejectedProofs.map(x=>x.kind+' rejected').join('; '));
+    else if(requiredProofs.length)add('handover','handover','fail',requiredProofs.map(x=>x.kind+' still required').join('; '));
+    else if(!signedHandover&&!deliveryPhotosOk)add('handover','handover','fail','delivered, no signed handover or delivery photos');
+    else add('handover','handover','ok','handover evidence present');
 
-    // Three-state checks: pass (evidence exists and is good), fail (evidence
-    // exists and is bad), n/a (no evidence exists and no alert about it).
-    // Only `fail` counts as a problem. `n/a` means "not applicable yet".
+    // 6. assignment health
+    const cancelled=asg.filter(a=>U(a.status)==='CANCELLED').length;
+    const live=asg.filter(a=>U(a.status)!=='CANCELLED').length;
+    if(!asg.length)add('assignment','assignment','na','no assignment yet');
+    else if(cancelled>0&&live===0)add('assignment','assignment','fail','all assignments cancelled, none active');
+    else add('assignment','assignment','ok',live+' active assignment(s)');
 
-    // Release document: fail only if a release document exists but is bad,
-    // or if there's an alert about it. Otherwise n/a.
-    const releaseDocs = docs.filter(d => {
-      const kind = String(d.kind || d.type || d.document_type || '').toLowerCase();
-      return kind.includes('release') || kind.includes('authoris') || kind.includes('authoriz');
-    });
-    const hasReleaseIssue = releaseDocs.some(d => {
-      const state = String(d.state || d.status || d.review_state || '').toLowerCase();
-      return state.includes('missing') || state.includes('reject') || state.includes('expired') || state === 'pending';
-    });
-    const releaseOk = releaseDocs.length > 0 && hasRelease;
-    const releaseCheck = hasReleaseIssue
-      ? { key:'release_document', name:'release document', status:'fail', note:'release document has a problem' }
-      : releaseOk
-      ? { key:'release_document', name:'release document', status:'pass', note:'signed release on file' }
-      : { key:'release_document', name:'release document', status:'n/a', note:'no release document on this order yet' };
+    // 7. message freshness — an inbound that has waited 3+ hours with no operator reply
+    const sorted=[...msgs].sort((a,b)=>String(a.authored_at).localeCompare(String(b.authored_at)));
+    const lastInbound=[...sorted].reverse().find(m=>['customer','site_contact','handoff_contact'].includes(m.author_type));
+    if(!lastInbound)add('messages','messages','ok','no inbound messages to answer');
+    else{
+      const after=sorted.filter(m=>m.author_type==='operator'&&String(m.authored_at)>String(lastInbound.authored_at));
+      const w=hrs(lastInbound.authored_at);
+      if(after.length)add('messages','messages','ok','last inbound has a reply');
+      else if(w!==null&&w>=3)add('messages','messages','fail','last '+lastInbound.author_type+' message '+w+'h old, no reply');
+      else add('messages','messages','ok','last inbound recent');
+    }
 
-    // Handover proof: fail only if there's proof of a bad handover, or an alert
-    // about a missing handover. Otherwise n/a for orders not yet delivered.
-    const handoverProofs = proofs.filter(pr => {
-      const kind = String(pr.kind || pr.type || '').toLowerCase();
-      return kind.includes('handover') || kind.includes('signed');
-    });
-    const handoverEvidence = handoverProofs.length > 0 ||
-      custodyEvents.some(ce => String(ce.event_type || '').toLowerCase().includes('handover'));
-    const delivered = String(o.display_lane || '').toLowerCase() === 'delivered';
-    const handoverCheck = hasHandover
-      ? { key:'handover_proof', name:'handover proof', status:'pass', note:'handover evidence present' }
-      : delivered && !handoverEvidence
-      ? { key:'handover_proof', name:'handover proof', status:'fail', note:'delivered but no handover evidence recorded' }
-      : { key:'handover_proof', name:'handover proof', status:'n/a', note:'order not yet delivered' };
+    // 8. tracking — only when moving
+    const trk=trkBy[oid]||[];
+    if(!moving)add('tracking','tracking','na','not on the road');
+    else if(!trk.length)add('tracking','tracking','fail','on the road but no position reports');
+    else{
+      let last=null;
+      for(const t of trk)if(!last||String(t.observed_at)>String(last))last=t.observed_at;
+      const lh=hrs(last);
+      if(lh!==null&&lh>6)add('tracking','tracking','fail','last position '+lh+'h old');
+      else add('tracking','tracking','ok','position recent');
+    }
 
-    const checks = [
-      { key:'address_parity', name:'address parity', status: sameCity ? 'fail' : 'pass', note: sameCity ? 'pickup and delivery are both in '+pc : 'pickup and delivery differ' },
-      { key:'alert_presence', name:'alert presence', status: hasAlert ? 'fail' : 'pass', note: hasAlert ? 'open alert on this order' : 'no open alert' },
-      { key:'travel_status', name:'travel status', status: onlyQuoted ? 'fail' : 'pass', note: onlyQuoted ? 'travel only quoted, nothing booked' : (booked>0 ? 'travel booked' : 'no travel rows') },
-      releaseCheck,
-      handoverCheck,
-      { key:'assignment_health', name:'assignment health', status: assignmentGap ? 'fail' : 'pass', note: assignmentGap ? 'assignment exists but no driver attached' : (hasDriverAssigned ? 'driver assigned' : 'no assignment yet') },
-      { key:'message_freshness', name:'message freshness', status: staleMessages ? 'fail' : 'pass', note: staleMessages ? 'last message '+lastMsgDays+' days ago' : (lastMsg ? 'last message '+lastMsgDays+' days ago' : 'no messages') },
-      { key:'tracking_freshness', name:'tracking freshness', status: staleTracking ? 'fail' : 'pass', note: staleTracking ? 'last tracking '+lastTrkDays+' days ago' : (lastTrk ? 'last tracking '+lastTrkDays+' days ago' : 'no tracking rows') },
-      { key:'condition_claim', name:'condition claim', status: openClaim ? 'fail' : 'pass', note: openClaim ? 'open condition claim on this order' : 'no open claim' },
-    ];
+    // 9. incidents — real statuses
+    const inc=incBy[oid]||[];
+    const openInc=inc.filter(i=>!i.resolved_at&&['INVESTIGATING','AWAITING_DECISION','NEEDS_HUMAN'].includes(U(i.status)));
+    if(!inc.length)add('incidents','incidents','ok','no incidents');
+    else if(openInc.length)add('incidents','incidents','fail',openInc.map(i=>i.kind+' ('+i.status.toLowerCase().replace(/_/g,' ')+')').join('; '));
+    else add('incidents','incidents','ok',inc.length+' incident(s), resolved');
 
-    // Quiet = no check fails (n/a and pass both count as not-a-problem)
-    const quiet = checks.every(c => c.status !== 'fail');
-    if(hasAlert)withAlert++;
-    if(sameCity)withSameCity++;
-    if(onlyQuoted)withQuotedOnly++;
-    if(releaseCheck.status === 'fail')withMissingRelease++;
-    if(handoverCheck.status === 'fail')withMissingHandover++;
-    if(assignmentGap)withAssignmentGap++;
-    if(staleMessages)withStaleMessages++;
-    if(staleTracking)withStaleTracking++;
-    if(openClaim)withOpenClaim++;
-    if(quiet)quietCount++;
+    const fails=checks.filter(c=>c.state==='fail');
+    const isQuiet=!hasAlert&&fails.length===0;
+    if(hasAlert)alertedCount++;
+    if(isQuiet)quietCount++;
+    if(!hasAlert&&fails.length>0)flaggedCount++;
 
-    rows.push({
-      oid, ref:o.reference||oid,
-      from: pc||'?', to: dc||'?',
-      quiet, checks
-    });
+    rows.push({oid,ref:o.reference||oid,from:pc||'?',to:dc||'?',hasAlert,quiet:isQuiet,fails,checks});
   }
-  return {
-    checked:rows.length, quiet:quietCount,
-    withAlert, withSameCity, withQuotedOnly,
-    withMissingRelease, withMissingHandover, withAssignmentGap,
-    withStaleMessages, withStaleTracking, withOpenClaim,
-    total:O.length, rows
-  };
+
+  return {total:O.length,quiet:quietCount,alerted:alertedCount,flagged:flaggedCount,snap:new Date(snap).toISOString().slice(0,16).replace('T',' '),rows};
 }
 
 const e=v=>String(v==null?'':v).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
@@ -528,24 +514,13 @@ function renderPage(){
   const hidNone=HID.length-hidWith;
   const hidRows=HID.map(x=>'<li><code>'+e(x.sig)+'</code> <span class=hs>'+e(x.s)+'</span> '+(x.r?e(x.r):'<b class=hn>no reason recorded</b>')+'</li>').join('');
   const HIDBLOCK=HID.length?'<details class=hid><summary>'+HID.length+' closed alerts &middot; '+hidWith+' with a reason &middot; '+hidNone+' without</summary><ul>'+hidRows+'</ul></details>':'';
-  const quietRows = quiet.rows.filter(r=>r.quiet).map(r=>{
-    const checks = r.checks.map(c=>{
-      const cls = c.status === 'fail' ? 'fail' : c.status === 'n/a' ? 'na' : 'ok';
-      return '<span class="qc '+cls+'" title="'+e(c.note)+'">'+e(c.name)+'</span>';
-    }).join('');
-    return '<tr><td><code>'+e(r.ref)+'</code></td><td>'+e(r.from)+' &rarr; '+e(r.to)+'</td><td>'+checks+'</td></tr>';
-  }).join('');
-  const alertRows = quiet.rows.filter(r=>r.checks.find(c=>c.key==='alert_presence' && !c.ok)).map(r=>'<li><code>'+e(r.ref)+'</code> &middot; '+e(r.from)+' &rarr; '+e(r.to)+'</li>').join('');
-  const surfacedRows = quiet.rows.filter(r=>!r.quiet).map(r=>{
-    const failed = r.checks.filter(c=>c.status === 'fail').map(c=>'<b class=qc-fail>'+e(c.name)+'</b>');
-    return '<tr><td><code>'+e(r.ref)+'</code></td><td>'+e(r.from)+' &rarr; '+e(r.to)+'</td><td>'+failed.join(', ')+'</td></tr>';
-  }).join('');
-  const QUIET='<details class=hid><summary><b>'+quiet.quiet+' of '+quiet.total+' orders passed all 9 automated checks</b> &middot; '+quiet.withAlert+' with an open alert &middot; '+quiet.withSameCity+' same-city &middot; '+quiet.withQuotedOnly+' travel only quoted &middot; '+quiet.withMissingRelease+' missing release &middot; '+quiet.withMissingHandover+' missing handover</summary>'+
-    '<p class="qh"><b>Nine checks per order.</b> If any check fails, the order is on the board above, not here. The check list is below. Hover any check to see what was verified.</p>'+
-    '<div class="qtable-wrap"><table class="qtable"><thead><tr><th>Order</th><th>Route</th><th>Checks</th></tr></thead><tbody>'+quietRows+'</tbody></table></div>'+
-    (surfacedRows?'<p class="qh"><b>'+quiet.rows.filter(r=>!r.quiet).length+' orders failed a check. The ones that need a person are on the board above; the rest have no open alert yet.</b></p><div class="qtable-wrap"><table class="qtable"><thead><tr><th>Order</th><th>Route</th><th>Failed checks</th></tr></thead><tbody>'+surfacedRows+'</tbody></table></div>':'')+
-    (alertRows?'<p class="qh"><b>Orders with an open alert</b></p><ul class="qlist">'+alertRows+'</ul>':'')+
-    '</details>';
+  const flagged=quiet.rows.filter(r=>!r.hasAlert&&r.fails.length).sort((a,b)=>b.fails.length-a.fails.length);
+  const failCell=r=>r.fails.map(c=>'<span class="qc warn" title="'+e(c.note)+'">'+e(c.name)+'</span>').join(' ');
+  const flaggedRows=flagged.map(r=>'<tr><td><code>'+e(r.ref)+'</code></td><td>'+e(r.from)+' &rarr; '+e(r.to)+'</td><td>'+failCell(r)+' '+e(r.fails.map(c=>c.note).join(' · '))+'</td></tr>').join('');
+  const quietRows=quiet.rows.filter(r=>r.quiet).map(r=>'<tr><td><code>'+e(r.ref)+'</code></td><td>'+e(r.from)+' &rarr; '+e(r.to)+'</td><td>'+r.checks.map(c=>'<span class="qc '+(c.state==='ok'?'ok':'na')+'" title="'+e(c.note)+'">'+e(c.name)+'</span>').join('')+'</td></tr>').join('');
+  const alertedRows=quiet.rows.filter(r=>r.hasAlert).map(r=>'<li><code>'+e(r.ref)+'</code> &middot; '+e(r.from)+' &rarr; '+e(r.to)+(r.fails.length?' &middot; also: '+e(r.fails.map(c=>c.name).join(', ')):'')+'</li>').join('');
+  const FLAG=flagged.length?'<details class=hid><summary><b>'+flagged.length+' more orders failed a check but have no alert</b></summary><p class="qh">Found by checking all '+quiet.total+' orders against the records. Snapshot clock: '+e(quiet.snap)+' UTC.</p><div class="qtable-wrap"><table class="qtable"><thead><tr><th>Order</th><th>Route</th><th>What the check found</th></tr></thead><tbody>'+flaggedRows+'</tbody></table></div></details>':'';
+  const QUIET=FLAG+'<details class=hid><summary><b>'+quiet.quiet+' of '+quiet.total+' orders passed every check</b> &middot; '+quiet.flagged+' failed a check (no alert) &middot; '+quiet.alerted+' have an alert (on board)</summary><p class="qh">Stage-aware checks (snapshot clock '+e(quiet.snap)+' UTC). A check that does not apply yet (for example, handover proof before a car is delivered) is shown grey, not failed. Hover a check to see what was verified.</p><div class="qtable-wrap"><table class="qtable"><thead><tr><th>Order</th><th>Route</th><th>Checks</th></tr></thead><tbody>'+quietRows+'</tbody></table></div>'+(alertedRows?'<p class="qh"><b>Orders with an alert (on board above)</b></p><ul class="qlist">'+alertedRows+'</ul>':'')+'</details>';
   return '<!doctype html><meta charset=utf-8><title>Needs a person</title><style>'+
     'body{font:15px/1.55 system-ui;background:#f7f8f9;margin:0;padding:28px;color:#1a1d21;max-width:1180px}'+
     'h1{font-size:20px;margin:0 0 3px}'+
