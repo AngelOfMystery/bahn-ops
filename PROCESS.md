@@ -104,6 +104,32 @@ A clone with no key is a different page and says so: nine rows fall back with
 the fallback line. The fallback exists so the control room is never empty, and
 it records why it fell back, which is the honest version of the same page.
 
+## The reviewers we hired by accident
+
+Late in the build, we asked two other models to review the submission cold. Not as collaborators — as judges. We gave them the briefs and the repo and asked what would cost us points.
+
+They found things we missed.
+
+**The approval boundary was not actually enforcing approval.** Both reviewers found it independently. The `/decide` endpoint fired the executor for any decision value — `accept` or `change`. A person who clicked "Change" expecting to edit would have executed the previous proposal. We had tested the buttons but not the intent. The fix was one line: `if(d.decision === 'accept')`. The lesson is that "the UI shows the right thing" is not the same as "the backend enforces the right thing."
+
+**The proposal's command was being replaced at handoff.** The `runCaseFor()` path hardcoded `command: 'alert.resolve'` regardless of what the model proposed. If the model said "replan the route," the saved proposal said "resolve the alert." A judge clicking Accept would have executed something different from what the card promised. Fixed by preserving the agent's actual command and adding `command` and `evidence_refs` to the `propose_action` schema as required fields.
+
+**Acknowledged alerts were being treated as closed.** The reviewer who found this put it best: "acknowledging work establishes ownership, not that unfinished work disappears." Our queue only admitted `status === 'OPEN'`. A case where the safety-stop alert was `ACKNOWLEDGED` but the recovery was still in progress disappeared from the board entirely. A judge clicking through the acknowledged cases would have seen a critical incident quietly vanish. The fix was to keep `ACKNOWLEDGED` on the board with a distinct chip and header bucket: "acknowledged, still in progress."
+
+**Proposal indexes were frozen at server startup.** New proposals written by the "Run agent" button were invisible until the server restarted. The reviewer caught this by reading the code, not by running the app. Fix: rebuild the indexes per request. Two reviewers, two independent ways to catch it.
+
+**The quiet-orders panel overclaimed.** We had three checks per order (address parity, alert presence, travel status) and the panel said "checked and quiet." Three checks do not establish that an order is safe to ignore. Fixed two ways: widened to nine checks per order (release document, handover proof, assignment health, message freshness, tracking freshness, condition claim, plus the original three), and changed the language from "checked and quiet" to **"passed the preliminary check"** with the full list visible and hoverable. A paranoid operator can now drill into every order and see exactly what was verified. The panel says what it did not check, too.
+
+**Operator overrides did not reach the model.** When the operator typed a driver reply in `/phone`, the inbox recorded it — but the model's next turn called `scripted_driver()` and returned the script. The override was persisted but invisible. This one was caught by an operator, not a reviewer: the question "why doesn't the agent react to my override?" exposed the gap. Fix: `ask_driver` reads `latest_reply_for(driver_id)` from the inbox before falling back to the script, and the `/phone/reply` endpoint appends a `[Phone log: the driver just replied]` event to the case history. On the next turn, the model sees the override as a real update and leads with it.
+
+**What this taught us.** Every one of those findings was a mismatch between what the interface promised and what the code did. The interface said "a person decides" — the backend executed on Change. The interface said "replan the route" — the backend saved "resolve the alert." The interface said "checked and quiet" — the check was too narrow. The interface said "I overrode the driver" — the model didn't see it.
+
+The process we would tell the next team is: get the reviewers in early, not late. The two external reviews cost us an hour of reading and four hours of fixing. They caught four P0 defects that would have cost us the submission. If we had done this at hour 6 instead of hour 30, the fixes would have been free.
+
+**What we did not take their word on.** One reviewer said the interface couldn't be scored without a live test. Fair — we recorded a live test. Another reviewer said a mocked execution was insufficient; the brief explicitly says "everything around it can be fake." We kept the mocked executor but added a `REQUESTED` status so the strip says "the executor recorded the request but the downstream system has not confirmed" instead of pretending success. That's a middle path the reviewer would probably accept.
+
+**What we threw away from the reviews.** The "add a real database with a versioned proposal state" recommendation. It would have been more correct, but it would have cost four hours and broken the fresh-clone demo. The point of the demo is not production-grade state management; it's the human-agent decision loop. We kept the loop and lost the architectural purity.
+
 ## What we would tell the next team
 
 Get the brief before you get the stack. We spent the first hours building
