@@ -444,6 +444,15 @@ function handoverStrip(r){
   const cmd = r.dec.command || 'alert.resolve';
   const decLine = '<div class="hstate done">&#10003; '+e(r.dec.decision)+' at '+e(t)+'</div>';
 
+  // If a decision exists but isn't accept, show a revision state, not "executing".
+  if(r.dec && r.dec.decision !== 'accept' && !r.exec){
+    return '<div class="handover pending">'+
+      decLine+
+      '<div class="hstate">&#9679; REVISION REQUESTED &middot; open the case to tell the agent what to do instead.</div>'+
+      '<div class="hstate"><a href="/case/'+encodeURIComponent(r.aid)+'">open the case &rarr;</a></div>'+
+      '</div>';
+  }
+
   if(r.exec){
     const exAt = String(r.exec.executed_at||'');
     const exT = exAt.slice(11,19) || '?';
@@ -490,9 +499,11 @@ function handoverStrip(r){
 function renderPage(){
   const Q=buildQueue();
   const quiet=buildQuiet();
-  const proposed=Q.filter(r=>r.g).length;
+  // Disjoint buckets: every card falls into exactly one bucket.
   const stopped=Q.filter(r=>r.sb).length;
-  const notrun=Q.filter(r=>!r.g && !r.sb).length;
+  const ackOnly=Q.filter(r=>!r.sb && r.status==='ACKNOWLEDGED').length;
+  const proposed=Q.filter(r=>!r.sb && r.status!=='ACKNOWLEDGED' && r.g).length;
+  const notrun=Q.filter(r=>!r.sb && r.status!=='ACKNOWLEDGED' && !r.g).length;
   const cards=Q.map(renderCard).join('');
   const hidWith=HID.filter(x=>x.r).length;
   const hidNone=HID.length-hidWith;
@@ -513,7 +524,7 @@ function renderPage(){
   const QUIET='<details class=hid><summary><b>'+quiet.quiet+' of '+quiet.total+' orders passed all 9 automated checks</b> &middot; '+quiet.withAlert+' with an open alert &middot; '+quiet.withSameCity+' same-city &middot; '+quiet.withQuotedOnly+' travel only quoted &middot; '+quiet.withMissingRelease+' missing release &middot; '+quiet.withMissingHandover+' missing handover</summary>'+
     '<p class="qh"><b>Nine checks per order.</b> If any check fails, the order is on the board above, not here. The check list is below. Hover any check to see what was verified.</p>'+
     '<div class="qtable-wrap"><table class="qtable"><thead><tr><th>Order</th><th>Route</th><th>Checks</th></tr></thead><tbody>'+quietRows+'</tbody></table></div>'+
-    (surfacedRows?'<p class="qh"><b>'+quiet.rows.filter(r=>!r.quiet).length+' orders failed at least one check and are on the board above</b></p><div class="qtable-wrap"><table class="qtable"><thead><tr><th>Order</th><th>Route</th><th>Failed checks</th></tr></thead><tbody>'+surfacedRows+'</tbody></table></div>':'')+
+    (surfacedRows?'<p class="qh"><b>'+quiet.rows.filter(r=>!r.quiet).length+' orders failed a check. The ones that need a person are on the board above; the rest have no open alert yet.</b></p><div class="qtable-wrap"><table class="qtable"><thead><tr><th>Order</th><th>Route</th><th>Failed checks</th></tr></thead><tbody>'+surfacedRows+'</tbody></table></div>':'')+
     (alertRows?'<p class="qh"><b>Orders with an open alert</b></p><ul class="qlist">'+alertRows+'</ul>':'')+
     '</details>';
   return '<!doctype html><meta charset=utf-8><title>Needs a person</title><style>'+
@@ -568,7 +579,7 @@ function renderPage(){
     '</script>'+
     '<h1>Needs a person</h1><p style="margin:0 0 22px;font-size:13px"><a href="/phone" style="color:#6b7280;text-decoration:none">Phone log &rarr;</a></p>'+
     '<p class=m><b>'+proposed+'</b> ready for your call &middot; <b>'+stopped+'</b> that need more evidence'+
-      (ACK_COUNT>0?' &middot; <b>'+ACK_COUNT+'</b> acknowledged, still in progress':'')+
+      (ackOnly>0?' &middot; <b>'+ackOnly+'</b> acknowledged, still in progress':'')+
       (notrun>0?' &middot; <b>'+notrun+'</b> the agent is still working on':'')+
       ' &middot; <span style="color:#9ca3af">'+Q.length+' on the board</span></p>'+
     QUIET+HIDBLOCK+
