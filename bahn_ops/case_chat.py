@@ -117,11 +117,13 @@ def tool_definitions():
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "summary": {"type": "string"},
-                    "rationale": {"type": "string"},
+                    "summary": {"type": "string", "description": "One sentence: what the operator should do."},
+                    "rationale": {"type": "string", "description": "Why: the evidence that supports this action."},
+                    "command": {"type": "string", "description": "The exact command to execute, e.g. ops.route.replan_delivery. Must be a real dotted command name from the allowlist, not a placeholder."},
+                    "evidence_refs": {"type": "array", "items": {"type": "string"}, "description": "The record ids you relied on: message ids, reservation ids, document ids, event ids. Every claim in the rationale must have at least one ref."},
                     "needs_approval": {"type": "boolean"},
                 },
-                "required": ["summary", "rationale"],
+                "required": ["summary", "rationale", "command", "evidence_refs"],
             },
         },
     ]
@@ -363,6 +365,8 @@ def _run_loop(messages, tools, ctx, record):
                     "kind": "propose",
                     "summary": args.get("summary", ""),
                     "rationale": args.get("rationale", ""),
+                    "command": args.get("command", "") or "",
+                    "evidence_refs": args.get("evidence_refs", []) or [],
                     "needs_approval": True,
                 }
                 proposed = True
@@ -695,6 +699,8 @@ def continue_case_streaming(alert_id, human_message):
                     "kind": "propose",
                     "summary": args.get("summary", ""),
                     "rationale": args.get("rationale", ""),
+                    "command": args.get("command", "") or "",
+                    "evidence_refs": args.get("evidence_refs", []) or [],
                     "needs_approval": True,
                 }
                 record["turns"].append({"tool": "propose_action", "args": args})

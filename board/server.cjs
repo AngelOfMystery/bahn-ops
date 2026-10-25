@@ -40,6 +40,7 @@ const HUMAN_SUMMARIES=(()=>{
 })();
 
 const refId = x => (x && typeof x === 'object') ? (x.id || x.ref || '') : String(x || '');
+const refTable = x => (x && typeof x === 'object') ? (x.table || '') : '';
 const refIds = arr => (arr || []).map(refId).filter(Boolean);
 
 const P=(()=>{
@@ -125,6 +126,7 @@ function buildCard(a){
     ra:q.rationale||'',
     ev:refIds(a.evidence_refs)[0]||'',
     oev:refIds(q.evidence_refs).length,
+    oevTables:(q.evidence_refs||[]).map(x=>refTable(x)).filter(Boolean),
     oevFirst:refIds(q.evidence_refs)[0]||'',
     sc:q.source_class||'',
     fs:q.fact_state||'',
@@ -209,7 +211,7 @@ function renderCard(r){
   const chips='<div class=chips>'+
     (srcFull?'<span class=chip title="'+e(srcFull)+' — recorded at '+e(factWhen)+' (alert raised '+e(triggered)+')">'+e(sourceLabel(srcFull))+'</span>':'')+
     (stFull?'<span class="chip st" title="'+e(stFull)+' — recorded at '+e(factWhen)+' (alert raised '+e(triggered)+')">'+e(stateLabel(stFull))+'</span>':'')+
-    (r.oev?'<span class="chip ev" title="'+r.oev+' pieces of evidence cited by the suggestion">'+r.oev+' source'+(r.oev===1?'':'s')+'</span>':'')+
+    (r.oev?'<span class="chip ev" title="'+r.oev+' pieces of evidence cited: '+e((r.oevTables||[]).slice(0,4).join(', '))+(r.oevTables && r.oevTables.length>4?' and '+r.oevTables.length-4+' more':'')+'">'+r.oev+' source'+(r.oev===1?'':'s')+'</span>':'')+
     '</div>';
   const caseLink='<a class=caselink href="/case/'+encodeURIComponent(r.aid)+'">Open case &rarr;</a>';
   const header='<div class=h><b>'+e(r.r)+'</b><span>'+e(r.f)+' &rarr; '+e(r.t)+'</span><small>'+e(r.s)+'</small></div>';
@@ -305,8 +307,8 @@ function renderPage(){
     return '<tr><td><code>'+e(r.ref)+'</code></td><td>'+e(r.from)+' &rarr; '+e(r.to)+'</td><td>'+checks+'</td></tr>';
   }).join('');
   const alertRows = quiet.rows.filter(r=>r.alert).map(r=>'<li><code>'+e(r.ref)+'</code> &middot; '+e(r.from)+' &rarr; '+e(r.to)+'</li>').join('');
-  const QUIET='<details class=hid><summary><b>'+quiet.quiet+' of '+quiet.total+' orders checked and quiet</b> &middot; '+quiet.withAlert+' with an open alert &middot; '+quiet.withSameCity+' same-city pickup and delivery &middot; '+quiet.withQuotedOnly+' travel only quoted</summary>'+
-    '<p class="qh">Every order was checked for three things: address parity (pickup and delivery city compared), alert presence (does the order have an open alert), travel status (is travel only quoted, never booked). An order that fails any check is on the board above, not here.</p>'+
+  const QUIET='<details class=hid><summary><b>'+quiet.quiet+' of '+quiet.total+' orders passed the preliminary check</b> &middot; '+quiet.withAlert+' with an open alert &middot; '+quiet.withSameCity+' same-city pickup and delivery &middot; '+quiet.withQuotedOnly+' travel only quoted</summary>'+
+    '<p class="qh"><b>This is a preliminary check, not a guarantee.</b> Three things were verified per order: address parity (pickup and delivery city compared), alert presence (does the order have an open alert), and travel status (is travel only quoted, never booked). This does not establish that an order is safe to ignore — a missing release document, a disputed handover, or a stale assignment could still be present. It means: no open alert, no same-city ambiguity, no booked-travel gap. If one of those is wrong, the order will show up when someone checks it.</p>'+
     '<table class="qtable"><thead><tr><th>Order</th><th>Route</th><th>Checks</th></tr></thead><tbody>'+quietRows+'</tbody></table>'+
     (alertRows?'<p class="qh"><b>Orders with an open alert</b></p><ul class="qlist">'+alertRows+'</ul>':'')+
     '</details>';
@@ -379,13 +381,27 @@ function runCaseFor(alertId, res){
       return res.end(JSON.stringify({ok:false,error:record.error||'unknown'}));
     }
     const prop = record.proposal || {};
+    // Preserve the agent's actual command if it named one. Fall back to
+    // alert.resolve only when the proposal had no command at all.
+    const propCommand = (prop.command || '').trim();
+    const command = propCommand || 'alert.resolve';
+    // Evidence refs: prefer ids the proposal actually cited. If absent,
+    // derive typed refs from the alert and order ids.
+    const evidenceRefs = (() => {
+      const propRefs = prop.evidence_refs || [];
+      if (Array.isArray(propRefs) && propRefs.length) return propRefs;
+      const ids = [];
+      if (record.alert_id) ids.push({id: record.alert_id, table: 'alerts'});
+      if (record.order_id) ids.push({id: record.order_id, table: 'orders'});
+      return ids;
+    })();
     const row = {
       alert_id: record.alert_id,
       order_id: record.order_id,
       summary: prop.summary || '',
       rationale: prop.rationale || '',
-      command: 'alert.resolve',
-      evidence_refs: record.turns ? record.turns.map(t=>t.result||'').filter(Boolean).slice(0,6) : [],
+      command: command,
+      evidence_refs: evidenceRefs,
       needs_approval: true,
       source_class: record.source_class || '',
       fact_state: record.fact_state || '',
@@ -534,15 +550,18 @@ h.createServer((q,s)=>{
       if(!d.alert_id||!d.decision){s.writeHead(400,{'content-type':'application/json'});return s.end(JSON.stringify({ok:false,error:'alert_id and decision required'}))}
       const row={alert_id:d.alert_id,decision:d.decision,command:d.command||'',at:new Date().toISOString()};
       f.appendFileSync(DEC,JSON.stringify(row)+'\n','utf8');
-      // Fire the executor in the background; do not wait
-      try{
-        const child=cp.spawn('python3',['-m','bahn_ops.execute',d.alert_id],{
-          cwd:p.join(__dirname,'..'),
-          detached:true,
-          stdio:'ignore'
-        });
-        child.unref();
-      }catch(e){}
+      // Only an explicit 'accept' fires the executor. 'change' records the
+      // intent but does not run the previous proposal.
+      if(d.decision === 'accept'){
+        try{
+          const child=cp.spawn('python3',['-m','bahn_ops.execute',d.alert_id],{
+            cwd:p.join(__dirname,'..'),
+            detached:true,
+            stdio:'ignore'
+          });
+          child.unref();
+        }catch(e){}
+      }
       s.writeHead(200,{'content-type':'application/json'});
       return s.end(JSON.stringify({ok:true,row}));
     });
