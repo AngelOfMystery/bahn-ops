@@ -130,6 +130,20 @@ The process we would tell the next team is: get the reviewers in early, not late
 
 **What we threw away from the reviews.** The "add a real database with a versioned proposal state" recommendation. It would have been more correct, but it would have cost four hours and broken the fresh-clone demo. The point of the demo is not production-grade state management; it's the human-agent decision loop. We kept the loop and lost the architectural purity.
 
+## Autorun: the agent works before anyone is looking
+
+A reviewer read the demo flow and said: *"The human must prompt the agent. The brief says the agent asks the driver if they're safe, where they are, and for a photo — before anyone at Bahn sees it."*
+
+They were right. Our board showed 18 cases waiting for a button click. That's a form, not an agent. The brief's own mockup has the agent's questions already asked and answered when the operator opens the case.
+
+The fix was `POST /run-all` — an async endpoint that walks the queue and runs `case_chat.run_case()` on every card without a proposal. One button on the board fires it; `BAHN_AUTORUN=1` runs it at startup. The counter shows `Agent: 4 of 18 done`, `Agent: 12 of 18 done`, then reloads when finished.
+
+Two engineering details mattered. First, the loop is **async** — the old version used `execFileSync` and blocked the server for 120 seconds per case. A judge clicking "Approve" during the run would have seen a frozen page. The async version takes 65 seconds for 18 cases and the server stays responsive.
+
+Second, the button is a **counter, not a spinner**. `Agent: 12 of 18 done` tells the operator the agent is making progress. A spinner is "wait, I don't know how long." A counter is "12 done, 6 to go, 10 more seconds."
+
+A judge who sees this work once understands the whole product. The agent does the legwork. The person decides.
+
 ## The quality check we did with AI we didn't build with
 
 The four-phase coding story above is about agents that wrote code. There is a fifth phase that isn't: at the end of the build, we asked three *other* AI surfaces to check our work. Not to write anything — to review.
@@ -429,3 +443,13 @@ shows up in `/phone`, every override shows up as `operator_override`.
 - Every accept fires `execute.py`, which writes a real `executions.jsonl` row
 - Customer-contact commands are refused, visibly, on the strip
 - Six tools, four routes beyond the two index pages, no dependencies outside the standard library
+
+## Final review: we audited our own "quiet orders" claim and it was wrong
+
+Late in the build we had an outside reviewer read the repo and the running board. The board said "0 of 100 orders passed all 9 checks" and "100 missing release, 100 missing handover". We assumed that was the data. It was our checks.
+
+Probing the dataset showed they tested values that do not exist: reservations never have a QUOTED status (only BOOKED and MISSED_CHECK_IN, with the real trap in snapshot_journey_state), incidents are never OPEN (INVESTIGATING, AWAITING_DECISION, NEEDS_HUMAN), and handover evidence only matters once an order is delivered. A check that fails everywhere and a check that passes everywhere are the same defect: neither tells an operator anything.
+
+We threw the nine checks away and rewrote them against the real field values, stage-aware, with pass / fail / not-applicable as separate states, and anchored "now" to the dataset snapshot rather than the wall clock. The same review found that proposals written by the agent did not appear on the board until a server restart (the index was frozen at startup), that the approval boundary hid the Accept button but did not enforce it server-side, and that a catch-all `alert.resolve` default could turn "escalate" into "resolve". All three are fixed, and the last two have regression tests.
+
+Tools: <list the coding agents and models you actually used, and for what>.
